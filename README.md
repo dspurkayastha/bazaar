@@ -24,11 +24,24 @@ pnpm lint
 
 Money is integer paise throughout; IDs are ULIDs; times are ISO strings.
 
+## Web app
+
+Bazaar serves the web app itself at `https://bazaar.sciscribesolutions.com/` (contract: `docs/WEB_API.md`; the frontend lives in `web/` and is built with `pnpm web:build` into `web/dist`). Sign-in is a passkey (Face ID in Safari); approvals above `PIN_REQUIRED_ABOVE_RUPEES` (default ₹500) also need the owner's 4–6 digit PIN, on every channel. Set `WEB_ORIGIN` and `WEBAUTHN_RP_ID` in `.env` (local dev: leave them unset for `http://localhost:8787`).
+
+First run on the VPS (after `bash deploy/setup-vps.sh`, with Caddy proxying the domain to `127.0.0.1:8787`):
+
+```sh
+pnpm web:build && pm2 restart bazaar     # once the web app is in the checkout
+pnpm member:setup-link dev               # prints https://bazaar.sciscribesolutions.com/setup/<code> (single use, 48 h)
+```
+
+Open that link on the iPhone in Safari, tap to create the passkey (Face ID), then in the app go to Household → Security and set the PIN (Face ID confirms it again). Everyone else gets a link from Household → Members → setup link. `pnpm member:setup-link` with no argument lists members and who has a passkey.
+
 ## Voice
 
-Voice-first mode: the iPhone app streams mic audio over `wss://…/voice` (contract: `docs/VOICE_PROTOCOL.md`); the gateway runs Sarvam STT (saaras:v4, code-mixed Bengali/Hindi/English), a conversational turn of the agent, and Sarvam TTS (Bulbul, MP3), sentence by sentence. A spoken "yes" can approve a held cart only for an owner, within 90 s of the question, up to `VOICE_APPROVAL_MAX_RUPEES` (default ₹2,000); above that the app asks for Face ID. BLOCK is never approvable.
+Voice-first mode: a client (the web app's Talk button, later a phone call) streams mic audio over `wss://…/voice` (contract: `docs/VOICE_PROTOCOL.md`); the gateway runs Sarvam STT (saaras:v4, code-mixed Bengali/Hindi/English), a conversational turn of the agent, and Sarvam TTS (Bulbul, MP3), sentence by sentence. A spoken "yes" can approve a held cart only for an owner, within 90 s of the question, up to `PIN_REQUIRED_ABOVE_RUPEES` (default ₹500); above that the owner's PIN is needed (web PIN pad, or the phone keypad). BLOCK is never approvable.
 
-Set `SARVAM_API_KEY` (and optionally the other `SARVAM_*` / `VOICE_*` vars in `.env.example`). Then try it with your own voice before the app exists (needs `ffmpeg` for anything but 16 kHz mono WAV: `brew install ffmpeg` / `sudo apt install ffmpeg`):
+Set `SARVAM_API_KEY` (and optionally the other `SARVAM_*` vars in `.env.example`). Then try it with your own voice before the app exists (needs `ffmpeg` for anything but 16 kHz mono WAV: `brew install ffmpeg` / `sudo apt install ffmpeg`):
 
 ```sh
 # Speech-to-text: streams the file to Sarvam in real time, prints each transcript with language, probability, latency

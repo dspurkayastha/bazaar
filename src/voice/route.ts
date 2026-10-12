@@ -1,7 +1,8 @@
 /**
  * GET /voice (WebSocket, @fastify/websocket). docs/VOICE_PROTOCOL.md "Transport":
- *   - member token on the upgrade (`Authorization: Bearer mtk_...`, the same check as the HTTP routes); missing or
- *     invalid → the socket is accepted and closed with 4401,
+ *   - member token on the upgrade (`Authorization: Bearer mtk_...`, the same check as the HTTP routes), or the web
+ *     app's `bz_session` cookie when `Origin` is exactly WEB_ORIGIN (a cross-site page cannot borrow the cookie's
+ *     session); missing or invalid → the socket is accepted and closed with 4401,
  *   - one live session per member: a second connection closes the first with 4409,
  *   - without SARVAM_API_KEY: `error` { code: voice_unconfigured } and close 1011.
  * Messages are buffered from the first byte, so nothing the app sends while we authenticate is lost.

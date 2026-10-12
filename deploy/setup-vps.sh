@@ -42,6 +42,10 @@ if ! grep -q '^BAZAAR_PG_PORT=' .env; then
   echo "BAZAAR_PG_PORT=$PG_PORT" >> .env
   echo "   Postgres will listen on 127.0.0.1:$PG_PORT"
 fi
+# Web app origin + passkey RP id (added to an older .env that predates the web app)
+grep -q '^WEB_ORIGIN=' .env || echo 'WEB_ORIGIN=https://bazaar.sciscribesolutions.com' >> .env
+grep -q '^WEBAUTHN_RP_ID=' .env || echo 'WEBAUTHN_RP_ID=bazaar.sciscribesolutions.com' >> .env
+grep -q '^PIN_REQUIRED_ABOVE_RUPEES=' .env || echo 'PIN_REQUIRED_ABOVE_RUPEES=500' >> .env
 PG_PORT=$(grep '^BAZAAR_PG_PORT=' .env | cut -d= -f2)
 sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgres://bazaar:bazaar@127.0.0.1:$PG_PORT/bazaar|" .env
 grep -q '^ANTHROPIC_API_KEY=sk-' .env || echo "   !! ANTHROPIC_API_KEY not set in .env"
@@ -49,6 +53,7 @@ grep -q '^ANTHROPIC_API_KEY=sk-' .env || echo "   !! ANTHROPIC_API_KEY not set i
 echo "== deps + build"
 pnpm install --frozen-lockfile
 pnpm build
+pnpm web:build   # web/ → web/dist (served at /); a no-op until the web app is in the checkout
 
 echo "== postgres"
 docker compose up -d
@@ -81,4 +86,5 @@ echo "== health"
 for i in $(seq 1 15); do curl -fsS http://127.0.0.1:8787/health && echo && break; sleep 1; done
 echo
 echo "Next: pnpm auth:instamart   (needs: ssh -L 8765:127.0.0.1:8765 <user>@<vps> from a laptop, then open the printed URL)"
+echo "Web sign-in: pnpm member:setup-link dev   (prints a one-time link; open it on the iPhone, register Face ID, set the PIN)"
 echo "Optional Caddy: add to /etc/caddy/Caddyfile ->  bazaar.sciscribesolutions.com { reverse_proxy 127.0.0.1:8787 }  then: sudo systemctl reload caddy"
