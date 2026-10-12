@@ -1,0 +1,45 @@
+{
+  "name": "bazaar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Household procurement agent: one voice, every quick-commerce store, a hard money gate.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "db:seed": "tsx src/db/seed.ts"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "0.45.4",
+    "postgres": "3.4.9",
+    "ulid": "3.0.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "^22.20.5",
+    "drizzle-kit": "0.31.11",
+    "eslint": "9.39.5",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "8.71.1",
+    "vitest": "3.2.7"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
