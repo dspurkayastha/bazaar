@@ -14,7 +14,7 @@
 import { QuoteMismatch, SupplierError } from '../../core/errors.js';
 import { quoteHash } from '../../core/hash.js';
 import { newId } from '../../core/ids.js';
-import { parseRupees } from '../../core/money.js';
+import { parseRupeesRounded } from '../../core/money.js';
 import { sanitiseField, sanitiseText } from '../../core/sanitise.js';
 import type { SanitiseLog } from '../../core/sanitise.js';
 import type {
@@ -84,24 +84,17 @@ function pick(o: Json, ...keys: string[]): unknown {
   return undefined;
 }
 
-/** Rupees (number or "₹1,234.50") -> paise without float multiplication. Extra decimals round half up. */
+/**
+ * Rupees (number or "₹1,234.50") -> paise by string decomposition only (core/money.ts parseRupeesRounded):
+ * no float multiplication anywhere; a third decimal rounds half up. Unparseable -> undefined.
+ */
 export function toPaise(v: unknown): Paise | undefined {
-  if (typeof v === 'number') {
-    if (!Number.isFinite(v)) return undefined;
+  if (typeof v === 'number' || typeof v === 'string') {
+    if (typeof v === 'string' && /^(free|nil|-|—)$/i.test(v.trim())) return 0;
     try {
-      return parseRupees(v);
+      return parseRupeesRounded(v);
     } catch {
-      return Math.round(v * 100);
-    }
-  }
-  if (typeof v === 'string') {
-    const t = v.trim();
-    if (/^(free|nil|-|—)$/i.test(t)) return 0;
-    try {
-      return parseRupees(t);
-    } catch {
-      const n = Number(t.replace(/₹|rs\.?|inr|,/gi, '').trim());
-      return Number.isFinite(n) && t !== '' ? Math.round(n * 100) : undefined;
+      return undefined;
     }
   }
   if (isObj(v)) return toPaise(pick(v, 'value', 'amount', 'price', 'offerPrice'));
@@ -273,9 +266,30 @@ interface CartParse {
   itemTotal: Paise;
   total: Paise;
   etaMinutes?: number;
+  /** The address the server cart is priced for, when get_cart says (it usually does). */
+  addressId?: string;
 }
 
 function parseCart(raw: unknown, itemKeys: Map<string, string>, log?: SanitiseLog): CartParse {
+  const parsed = parseCartBody(raw, itemKeys, log);
+  const root = isObj(raw) ? raw : {};
+  const cart = isObj(root.cart) ? root.cart : root;
+  const addressId = str(pick(cart, 'addressId', 'selectedAddressId', 'deliveryAddressId'));
+  return addressId !== undefined ? { ...parsed, addressId } : parsed;
+}
+
+/** The server cart must be priced for the address we are about to pay to; otherwise it is not our quote. */
+function assertCartAddress(parsed: CartParse, expected: string, op: string): void {
+  if (parsed.addressId !== undefined && parsed.addressId !== expected) {
+    throw new QuoteMismatch(
+      `address ${expected}`,
+      `address ${parsed.addressId}`,
+      `${op}: the server cart is for another delivery address; re-quote`,
+    );
+  }
+}
+
+function parseCartBody(raw: unknown, itemKeys: Map<string, string>, log?: SanitiseLog): CartParse {
   const root = isObj(raw) ? raw : {};
   const cart = isObj(root.cart) ? root.cart : root;
   const items = arr(pick(cart, 'items', 'cartItems', 'products'));
@@ -514,6 +528,7 @@ export class InstamartSupplier implements Supplier {
       selectedAddressId: addressId,
     });
     const parsed = parseCart(await this.call('get_cart', {}), this.itemKeys, this.log);
+    assertCartAddress(parsed, addressId, 'quote');
 
     const unavailable = [...parsed.unavailable];
     const inCart = new Set(parsed.lines.map((l) => l.variantId));
@@ -528,6 +543,7 @@ export class InstamartSupplier implements Supplier {
   async readCart(place: Place): Promise<Quote> {
     const addressId = this.addressId(place, 'get_cart');
     const parsed = parseCart(await this.call('get_cart', {}), this.itemKeys, this.log);
+    assertCartAddress(parsed, addressId, 'readCart');
     return this.build(parsed.lines, parsed.fees, parsed.unavailable, parsed.total, place, addressId, parsed.etaMinutes);
   }
 
@@ -594,6 +610,7 @@ export class InstamartSupplier implements Supplier {
   async place(quote: Quote, payment: PaymentMethod): Promise<PlacedOrder> {
     // Defence in depth on top of the gate's re-read: the server cart must still be the quoted one.
     const live = parseCart(await this.call('get_cart', {}), this.itemKeys, this.log);
+    assertCartAddress(live, quote.supplierAddressId, 'place');
     const liveBody = {
       supplierId: ID,
       placeId: quote.placeId,

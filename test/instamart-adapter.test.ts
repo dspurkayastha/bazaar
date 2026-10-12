@@ -44,6 +44,35 @@ describe('money conversion', () => {
     expect(toPaise({ value: 12 })).toBe(1200);
     expect(toPaise(undefined)).toBeUndefined();
   });
+
+  it('is exact on the inputs float multiplication gets wrong, and rounds a third decimal half-up', () => {
+    expect(toPaise(1.005)).toBe(101); // 1.005 * 100 = 100.49999999999999 in float
+    expect(toPaise('1.005')).toBe(101);
+    expect(toPaise(1.004)).toBe(100);
+    expect(toPaise(230.5)).toBe(23050);
+    expect(toPaise('230.5')).toBe(23050);
+    expect(toPaise('₹1,123.00')).toBe(112300);
+    expect(toPaise('₹ 1,123')).toBe(112300);
+    expect(toPaise(0.1 + 0.2)).toBe(30); // "0.30000000000000004"
+    expect(toPaise(0.7 + 0.1)).toBe(80); // "0.7999999999999999" → 0.79|9 → 80
+    expect(toPaise(58.455)).toBe(5846);
+    expect(toPaise(4.35)).toBe(435); // 4.35 * 100 = 434.99999999999994 in float
+    expect(toPaise(1e-7)).toBe(0);
+    expect(toPaise(1.5e2)).toBe(15000);
+    expect(toPaise('-12.345')).toBe(-1235);
+    expect(toPaise('12.3.4')).toBeUndefined();
+    expect(toPaise('₹')).toBeUndefined();
+    expect(toPaise(Number.NaN)).toBeUndefined();
+    expect(toPaise(Infinity)).toBeUndefined();
+  });
+
+  it('refuses a server cart priced for another address (readCart and quote)', async () => {
+    const other = fixture<{ cart: { addressId: string } }>('get_cart');
+    other.cart.addressId = 'ADDR-ELSEWHERE';
+    const s = supplier(fakeTool({ update_cart: fixture('update_cart'), get_cart: other }));
+    await expect(s.readCart(HOME)).rejects.toBeInstanceOf(QuoteMismatch);
+    await expect(s.quote(LINES, HOME)).rejects.toBeInstanceOf(QuoteMismatch);
+  });
 });
 
 describe('product mapping', () => {

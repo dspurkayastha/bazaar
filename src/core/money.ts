@@ -62,3 +62,40 @@ export function formatINR(amount: Paise, opts: { alwaysPaise?: boolean } = {}): 
   const fracPart = frac !== 0 || opts.alwaysPaise ? `.${String(frac).padStart(2, '0')}` : '';
   return `${negative ? '-' : ''}₹${groupIndian(String(whole))}${fracPart}`;
 }
+
+/**
+ * Parse a rupee amount with any number of decimals into paise, rounding half-up (away from zero) on the third
+ * decimal. String decomposition only, no float multiplication: 1.005 → 101, 58.455 → 5846, "₹1,123.00" → 112300.
+ * Numbers go through String(n), the shortest round-trip decimal, so 0.1 + 0.2 ("0.30000000000000004") → 30.
+ * Accepts currency marks, digit grouping, a sign and exponent forms ("1.5e2"). Throws on anything else.
+ */
+export function parseRupeesRounded(input: string | number): Paise {
+  if (typeof input === 'number' && !Number.isFinite(input)) throw new TypeError(`Not a rupee amount: ${input}`);
+  const raw = typeof input === 'number' ? String(input) : input;
+  const cleaned = raw
+    .replace(/₹|rs\.?|inr/gi, '')
+    .replace(/[,\s]/g, '')
+    .trim();
+  const m = /^([-+])?(\d*)(?:\.(\d*))?(?:e([-+]?\d+))?$/i.exec(cleaned);
+  if (!m || (m[2] ?? '') + (m[3] ?? '') === '') throw new TypeError(`Not a rupee amount: ${JSON.stringify(input)}`);
+  let intPart = m[2] ?? '';
+  let fracPart = m[3] ?? '';
+  const exp = m[4] === undefined ? 0 : Number(m[4]);
+  if (Math.abs(exp) > 30) throw new TypeError(`Rupee amount out of range: ${raw}`);
+  // Move the decimal point by the exponent on the digit strings.
+  if (exp > 0) {
+    const moved = fracPart.padEnd(exp, '0');
+    intPart += moved.slice(0, exp);
+    fracPart = moved.slice(exp);
+  } else if (exp < 0) {
+    const moved = intPart.padStart(-exp, '0');
+    fracPart = moved.slice(moved.length + exp) + fracPart;
+    intPart = moved.slice(0, moved.length + exp);
+  }
+  const digits = (intPart.replace(/^0+/, '') || '0') + fracPart.padEnd(2, '0').slice(0, 2);
+  if (digits.length > 15) throw new TypeError(`Rupee amount out of range: ${raw}`);
+  let paise = Number(digits); // a plain integer digit string: exact
+  const third = fracPart.charAt(2);
+  if (third !== '' && third >= '5') paise += 1;
+  return m[1] === '-' && paise !== 0 ? -paise : paise;
+}
