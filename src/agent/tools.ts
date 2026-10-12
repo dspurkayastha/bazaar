@@ -9,7 +9,7 @@
  *  - build_cart only accepts variants the model has actually been shown in this run,
  *  - no tool throws into the model: every failure comes back as { ok: false, error }.
  */
-import { BazaarError, PolicyBlock, PolicyHold } from '../core/errors.js';
+import { BazaarError, PolicyBlock, PolicyHold, QuoteMismatch } from '../core/errors.js';
 import { formatINR } from '../core/money.js';
 import { sanitiseField, sanitiseProduct, sanitiseQuoteForModel } from '../core/sanitise.js';
 import type {
@@ -37,6 +37,8 @@ import type { Store } from './store.js';
 export const MAX_LINES = 40;
 export const MAX_LINE_QUANTITY = 99;
 const MAX_SEARCH_RESULTS = 8;
+export const MAX_SEARCH_MANY_QUERIES = 12;
+const MAX_SEARCH_MANY_RESULTS = 5;
 
 /** Mutable per-request state the tools share with the loop. */
 export interface RunState {
@@ -91,6 +93,8 @@ export type ToolResult = Json & { ok: boolean };
 
 interface ToolDef {
   spec: ToolSpec;
+  /** Safe to run concurrently with other read-only calls from the same model turn (no cart/gate/question state). */
+  readOnly?: boolean;
   run(input: unknown, env: ToolEnv): Promise<Json>;
 }
 
@@ -152,8 +156,8 @@ function productView(p: SupplierProduct) {
   };
 }
 
-function showProducts(products: SupplierProduct[], env: ToolEnv) {
-  const clean = products.slice(0, MAX_SEARCH_RESULTS).map((p) => sanitiseProduct(p, env.sanitiseLog));
+function showProducts(products: SupplierProduct[], env: ToolEnv, limit = MAX_SEARCH_RESULTS) {
+  const clean = products.slice(0, limit).map((p) => sanitiseProduct(p, env.sanitiseLog));
   for (const p of clean) for (const v of p.variants) env.state.seenVariants.add(v.variantId);
   return clean.map(productView);
 }
@@ -226,6 +230,7 @@ export function gateLineNotRun(reason: string): string {
 const supplierProp = { type: 'string', description: 'Supplier id; optional when only one supplier serves the place.' };
 
 const search: ToolDef = {
+  readOnly: true,
   spec: {
     name: 'search',
     description:
@@ -251,7 +256,60 @@ const search: ToolDef = {
   },
 };
 
+const searchMany: ToolDef = {
+  readOnly: true,
+  spec: {
+    name: 'search_many',
+    description: `Search the catalogue for SEVERAL items at once (1 to ${MAX_SEARCH_MANY_QUERIES} queries, run in parallel). Put every item the request needs (recipe ingredients, extras, dessert) in ONE call. Returns, per query, the top ${MAX_SEARCH_MANY_RESULTS} products with variants (variantId, label, price in paise, stock), and per-query errors when a search failed.`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        queries: {
+          type: 'array',
+          items: { type: 'string', description: 'Search text, max 80 chars.' },
+          minItems: 1,
+          maxItems: MAX_SEARCH_MANY_QUERIES,
+        },
+        supplier: supplierProp,
+      },
+      required: ['queries'],
+    },
+  },
+  async run(input, env) {
+    const i = obj(input);
+    if (!Array.isArray(i.queries) || i.queries.length === 0 || i.queries.length > MAX_SEARCH_MANY_QUERIES)
+      throw new ToolInputError(`queries must be an array of 1 to ${MAX_SEARCH_MANY_QUERIES} strings`);
+    const queries = i.queries.map((q, n) => str(q, `queries[${n}]`, 80));
+    const suppliers = pickSuppliers(env, optStr(i.supplier, 'supplier'));
+    const settled = await Promise.allSettled(
+      queries.map(async (query) => {
+        const nested = await Promise.all(suppliers.map((s) => s.search(query, env.place)));
+        return nested.flat();
+      }),
+    );
+    const results: { query: string; products: ReturnType<typeof showProducts>; note?: string }[] = [];
+    const errors: { query: string; kind: 'supplier'; message: string }[] = [];
+    settled.forEach((r, n) => {
+      const query = queries[n]!;
+      if (r.status === 'fulfilled') {
+        const products = showProducts(r.value, env, MAX_SEARCH_MANY_RESULTS);
+        results.push({
+          query,
+          products,
+          ...(products.length === 0 ? { note: 'No matches. Try a shorter or more generic query.' } : {}),
+        });
+      } else {
+        const message = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        errors.push({ query, kind: 'supplier', message: sanitiseField(message, 'search_many.error', env.sanitiseLog) });
+      }
+    });
+    if (results.length === 0) return { ok: false, error: { kind: 'supplier', message: errors[0]!.message }, errors };
+    return { ok: true, results, errors };
+  },
+};
+
 const goToItems: ToolDef = {
+  readOnly: true,
   spec: {
     name: 'go_to_items',
     description:
@@ -269,6 +327,7 @@ const goToItems: ToolDef = {
 };
 
 const readCart: ToolDef = {
+  readOnly: true,
   spec: {
     name: 'read_cart',
     description: 'Read the live supplier cart for the delivery place.',
@@ -321,6 +380,14 @@ function parseLines(raw: unknown, env: ToolEnv): CartLine[] {
   });
 }
 
+export type BuildCartErrorKind = 'supplier' | 'quote_mismatch' | 'invalid_line';
+
+function buildCartError(kind: BuildCartErrorKind, message: string, env: ToolEnv): Json {
+  const clean =
+    kind === 'invalid_line' ? message : sanitiseField(message, 'build_cart.error', env.sanitiseLog, 'unreadable error');
+  return { ok: false, error: { kind, message: clean } };
+}
+
 const buildCart: ToolDef = {
   spec: {
     name: 'build_cart',
@@ -354,15 +421,27 @@ const buildCart: ToolDef = {
     },
   },
   async run(input, env) {
-    const i = obj(input);
-    const supplier = pickOne(env, optStr(i.supplier, 'supplier'));
-    const lines = parseLines(i.lines, env);
-    const quote = await supplier.quote(lines, env.place);
-    await env.store.saveQuote(env.household.id, quote, env.request.id);
-    env.state.quotes.set(supplier.id, quote);
-    // A new cart invalidates any earlier proposal for this supplier.
-    env.state.proposed = false;
-    return { ok: true, quote: quoteView(quote, env) };
+    // Failures come back as { ok: false, error: { kind, message } } so the loop can tell repeats apart.
+    let supplier: Supplier;
+    let lines: CartLine[];
+    try {
+      const i = obj(input);
+      supplier = pickOne(env, optStr(i.supplier, 'supplier'));
+      lines = parseLines(i.lines, env);
+    } catch (err) {
+      return buildCartError('invalid_line', err instanceof Error ? err.message : String(err), env);
+    }
+    try {
+      const quote = await supplier.quote(lines, env.place);
+      await env.store.saveQuote(env.household.id, quote, env.request.id);
+      env.state.quotes.set(supplier.id, quote);
+      // A new cart invalidates any earlier proposal for this supplier.
+      env.state.proposed = false;
+      return { ok: true, quote: quoteView(quote, env) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return buildCartError(err instanceof QuoteMismatch ? 'quote_mismatch' : 'supplier', message, env);
+    }
   },
 };
 
@@ -516,6 +595,7 @@ const askUser: ToolDef = {
 };
 
 const resolvePlaceTool: ToolDef = {
+  readOnly: true,
   spec: {
     name: 'resolve_place',
     description:
@@ -535,9 +615,40 @@ const resolvePlaceTool: ToolDef = {
   },
 };
 
-export const TOOLS: ToolDef[] = [search, goToItems, readCart, buildCart, proposeCheckout, askUser, resolvePlaceTool];
+export const TOOLS: ToolDef[] = [
+  search,
+  searchMany,
+  goToItems,
+  readCart,
+  buildCart,
+  proposeCheckout,
+  askUser,
+  resolvePlaceTool,
+];
 
 export const TOOL_SPECS: ToolSpec[] = TOOLS.map((t) => t.spec);
+
+/** Read-only tools may run concurrently within one model turn; the rest run afterwards, in the model's order. */
+export function isReadOnlyTool(name: string): boolean {
+  return TOOLS.find((t) => t.spec.name === name)?.readOnly === true;
+}
+
+/** { kind, message } of a failed tool result, whatever shape the tool used. */
+export function errorOf(result: ToolResult): { kind: string; message: string } | undefined {
+  if (result.ok) return undefined;
+  const e = result.error;
+  if (typeof e === 'object' && e !== null) {
+    const o = e as { kind?: unknown; message?: unknown };
+    return {
+      kind: typeof o.kind === 'string' ? o.kind : 'tool',
+      message: typeof o.message === 'string' ? o.message : '',
+    };
+  }
+  return {
+    kind: typeof result.status === 'string' ? String(result.status).toLowerCase() : 'tool',
+    message: String(e ?? ''),
+  };
+}
 
 /** Run one tool call. Never throws; failures are returned to the model as { ok: false, error }. */
 export async function executeTool(name: string, input: unknown, env: ToolEnv): Promise<ToolResult> {

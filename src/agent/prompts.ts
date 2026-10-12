@@ -39,6 +39,8 @@ export interface PromptOptions {
   /** Why this place was chosen. */
   placeReason?: 'explicit' | 'member' | 'context' | 'default';
   now?: string;
+  /** Tool-call budget stated to the model (default 20). */
+  maxToolCalls?: number;
 }
 
 export function buildSystemPrompt(
@@ -116,7 +118,10 @@ export function buildSystemPrompt(
     '8. After the cart is built and priced, call propose_checkout once. It asks the gate; the gate decides PAY, HOLD or BLOCK, not you. If the answer is HOLD, the owner must approve the exact quote hash; do not try again with a changed cart to dodge it. If the answer is BLOCK, tell the user plainly what was blocked and why.',
     '9. If propose_checkout says the cart changed (quote_mismatch), rebuild the cart once and propose again.',
     '10. There is no pay tool. Never claim an order was placed unless propose_checkout returned status PLACED.',
-    '11. You have at most 12 tool calls. Do not waste them: one search per item class, one build_cart, one propose_checkout.',
+    `11. You have at most ${opts.maxToolCalls ?? 20} tool calls and about a minute. Do not waste them. Work in this order: ONE search_many call with every recipe ingredient and requested item (including extras like dessert), then ONE build_cart call with the complete cart, then ONE propose_checkout. Use search only for a single follow-up lookup.`,
+    '12. You may issue independent read-only calls in the same turn; they run concurrently.',
+    '13. If build_cart returns an error, do not resend the same lines. Fix what the error names (an unknown variantId means search again). If the store itself failed (kind "supplier"), stop and tell the user plainly that the cart could not be built. Never retry the same failing call.',
+    '14. Do not narrate between tool calls. Write text only for the final answer, and never end it with a plan ("let me...", "now I will...") or a colon.',
   );
 
   add(
