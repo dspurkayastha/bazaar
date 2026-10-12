@@ -17,6 +17,7 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
   # (apollo-web, sciscribe-web) did not come back on 12 Oct 2026. They keep running on the old
   # runtime until their next restart, which is fine.
 fi
+command -v ffmpeg >/dev/null || apt-get install -y ffmpeg   # voice:test converts recordings
 command -v pnpm >/dev/null || npm i -g pnpm
 command -v pm2 >/dev/null || npm i -g pm2
 node -v

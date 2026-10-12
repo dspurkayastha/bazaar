@@ -3,11 +3,13 @@
 This code was written on Linux with no Swift compiler. Signatures below are what the code assumes (iOS 18 SDK, Swift 5.10 language mode). Items marked RISK are the ones most likely to need a tweak. Xcode 26 may add deprecation warnings (for example `.allowBluetooth` becoming `.allowBluetoothHFP`); those are warnings, not errors.
 
 ## Project / build
+
 - XcodeGen keys: `info.properties` for Info.plist, `dependencies: - target: BazaarControls, embed: true`, `type: app-extension`. If `xcodegen generate` complains about a key, check the XcodeGen docs for your installed version.
 - `Shared/TalkToBazaarIntent.swift` is in both targets (app: whole `Shared` folder; extension: that single file).
 - The AppShortcutsProvider (`BazaarShortcuts.swift`) is app-only. Intent metadata extraction may warn when the intent exists in two targets; it is expected.
 
 ## AppIntents (`Shared/TalkToBazaarIntent.swift`, `BazaarShortcuts.swift`, `BazaarControls/*`)
+
 - `protocol AppIntent { static var title: LocalizedStringResource { get }; static var description: IntentDescription { get }; static var openAppWhenRun: Bool { get }; func perform() async throws -> some IntentResult }`. Code: `static var title: LocalizedStringResource = "..."`, `static var description = IntentDescription("...")`, `static var openAppWhenRun: Bool = true`.
 - `IntentDescription(_ descriptionText: LocalizedStringResource, ...)`.
 - `protocol AppShortcutsProvider { @AppShortcutsBuilder static var appShortcuts: [AppShortcut] { get } }`.
@@ -16,6 +18,7 @@ This code was written on Linux with no Swift compiler. Signatures below are what
 - RISK (behavior, not compile): whether an `openAppWhenRun` intent triggered from a Control runs `perform()` inside the app process. The app reads the flag from `UserDefaults.standard`. If a Control opens the app but no session starts, move the flag to an App Group: add the `App Groups` capability (`group.com.sciscribe.bazaar`) to both targets and use `UserDefaults(suiteName:)` in `TalkRequest`. The Action Button / Shortcut path is unaffected.
 
 ## SwiftUI
+
 - `@main @MainActor struct BazaarApp: App`; `StateObject(wrappedValue:)` assigned to `_settings`/`_session` in `init()`.
 - `View.onChange(of: V, initial: Bool = false, _ action: (V, V) -> Void)` (iOS 17 two-argument form) in `RootView`.
 - `View.onOpenURL(perform: (URL) -> Void)`; `View.onReceive(_ publisher, perform:)` with `NotificationCenter.Publisher.receive(on:)` (needs `import Combine`).
@@ -30,6 +33,7 @@ This code was written on Linux with no Swift compiler. Signatures below are what
 - `Button(role: .cancel, action: ..., label: ...)`; `Label(_:systemImage:)`; `Font.monospacedDigit()`.
 
 ## AVFoundation / AVFAudio
+
 - `AVAudioSession.sharedInstance().setCategory(_ category: AVAudioSession.Category, mode: AVAudioSession.Mode, options: AVAudioSession.CategoryOptions = []) throws` with `.playAndRecord`, `.voiceChat`, `[.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]`. (In the iOS 26 SDK `.allowBluetooth` is deprecated in favor of `.allowBluetoothHFP`.)
 - `setActive(_ active: Bool) throws`; `setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws` with `.notifyOthersOnDeactivation`.
 - `AVAudioApplication.shared.recordPermission` returning `AVAudioApplication.recordPermission` enum (`.undetermined/.denied/.granted`); `AVAudioApplication.requestRecordPermission(completionHandler: @escaping (Bool) -> Void)` (class method, iOS 17).
@@ -42,6 +46,7 @@ This code was written on Linux with no Swift compiler. Signatures below are what
 - `Data.append<S>(_ buffer: UnsafeBufferPointer<S>)` used with `UnsafeBufferPointer(start: channel[0], count:)`.
 
 ## AudioToolbox
+
 - `AudioFileStreamOpen(_ inClientData: UnsafeMutableRawPointer?, _ inPropertyListenerProc: AudioFileStream_PropertyListenerProc, _ inPacketsProc: AudioFileStream_PacketsProc, _ inFileTypeHint: AudioFileTypeID, _ outAudioFileStream: UnsafeMutablePointer<AudioFileStreamID?>) -> OSStatus`. RISK: the two closure literals are passed inline with inferred parameter types, so they must not capture; the packets closure's last parameter is `UnsafeMutablePointer<AudioStreamPacketDescription>` (non-optional in some SDKs, optional in others); `handlePackets` takes an optional so either works.
 - `AudioFileStream_PropertyListenerProc = (UnsafeMutableRawPointer, AudioFileStreamID, AudioFileStreamPropertyID, UnsafeMutablePointer<AudioFileStreamPropertyFlags>) -> Void`.
 - `AudioFileStream_PacketsProc = (UnsafeMutableRawPointer, UInt32, UInt32, UnsafeRawPointer, UnsafeMutablePointer<AudioStreamPacketDescription>) -> Void`.
@@ -56,14 +61,17 @@ This code was written on Linux with no Swift compiler. Signatures below are what
 - `AudioQueueSetProperty(_ inAQ, _ inID: AudioQueuePropertyID, _ inData: UnsafeRawPointer, _ inDataSize: UInt32)` with `kAudioQueueProperty_EnableLevelMetering` (UInt32 = 1); `AudioQueueGetProperty(_ inAQ, _ inID, _ outData: UnsafeMutableRawPointer, _ ioDataSize: UnsafeMutablePointer<UInt32>)` with `kAudioQueueProperty_CurrentLevelMeter` into `[AudioQueueLevelMeterState]` (one element per channel; `mAveragePower`, `mPeakPower` are Float32, linear 0...1). RISK (behavior): metering on a compressed-input queue; if the speaking orb never reacts to level it falls back to its fixed pulse.
 
 ## LocalAuthentication
+
 - `LAContext().canEvaluatePolicy(_ policy: LAPolicy, error: NSErrorPointer) -> Bool` with `&policyError` where `var policyError: NSError?`.
 - `LAContext().evaluatePolicy(_ policy: LAPolicy, localizedReason: String) async throws -> Bool` (async overload of the completion-handler method). Policy `.deviceOwnerAuthenticationWithBiometrics` (no passcode fallback on purpose).
 
 ## Security (Keychain)
+
 - `SecItemCopyMatching(_ query: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus`, `SecItemUpdate(_ query: CFDictionary, _ attributesToUpdate: CFDictionary) -> OSStatus`, `SecItemAdd(_ attributes: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus`, `SecItemDelete(_ query: CFDictionary) -> OSStatus`.
 - Keys: `kSecClass`, `kSecClassGenericPassword`, `kSecAttrService`, `kSecAttrAccount`, `kSecValueData`, `kSecReturnData`, `kSecMatchLimit`, `kSecMatchLimitOne`, `kSecAttrAccessible`, `kSecAttrAccessibleAfterFirstUnlock`. Results compared to `errSecSuccess` / `errSecItemNotFound`.
 
 ## Foundation
+
 - `URLSession(configuration:delegate:delegateQueue:)`, `URLSession.webSocketTask(with: URLRequest) -> URLSessionWebSocketTask`, `resume()`, `cancel(with: URLSessionWebSocketTask.CloseCode, reason: Data?)`, `send(_ message: URLSessionWebSocketTask.Message, completionHandler: @escaping (Error?) -> Void)`, `receive(completionHandler: @escaping (Result<URLSessionWebSocketTask.Message, Error>) -> Void)`, `sendPing(pongReceiveHandler: @escaping (Error?) -> Void)`, `closeCode: URLSessionWebSocketTask.CloseCode` (`.rawValue: Int`, 0 = invalid), `invalidateAndCancel()`.
 - Delegate methods: `urlSession(_:webSocketTask:didOpenWithProtocol:)`, `urlSession(_:webSocketTask:didCloseWith:reason:)`, `urlSession(_:task:didCompleteWithError:)`.
 - RISK (behavior): custom close codes 4401/4409 must surface through `closeCode.rawValue`. If the server rejects the upgrade with HTTP 401 instead, `didCompleteWithError` maps `task.response` status 401 to 4401.
@@ -72,6 +80,7 @@ This code was written on Linux with no Swift compiler. Signatures below are what
 - `UIApplication.shared.isIdleTimerDisabled`, `UIDevice.current.model/systemVersion`, `UIImpactFeedbackGenerator(style:).impactOccurred()`, `UISelectionFeedbackGenerator().selectionChanged()`, `UINotificationFeedbackGenerator().notificationOccurred(_:)`.
 
 ## Likeliest first compile errors
+
 1. `AudioFileStreamOpen` closure parameter types (see above).
 2. `MainActor.assumeIsolated` closures returning `Void?` from `self?.method()` (fix: write `if let self { ... }` inside).
 3. Non-Sendable capture warnings promoted by your build settings (project uses `SWIFT_STRICT_CONCURRENCY: minimal`).

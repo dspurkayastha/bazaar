@@ -12,16 +12,16 @@ options:
   developmentLanguage: en
   createIntermediateGroups: true
   deploymentTarget:
-    iOS: "18.0"
+    iOS: '18.0'
 settings:
   base:
-    SWIFT_VERSION: "5.10"
-    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
-    TARGETED_DEVICE_FAMILY: "1"
+    SWIFT_VERSION: '5.10'
+    IPHONEOS_DEPLOYMENT_TARGET: '18.0'
+    TARGETED_DEVICE_FAMILY: '1'
     CODE_SIGN_STYLE: Automatic
-    DEVELOPMENT_TEAM: ""          # <<< SET ME (Team ID), see note at the top
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: '' # <<< SET ME (Team ID), see note at the top
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
     SWIFT_STRICT_CONCURRENCY: minimal
 targets:
   Bazaar:
@@ -29,7 +29,7 @@ targets:
     platform: iOS
     sources:
       - path: Bazaar
-      - path: Shared            # TalkToBazaarIntent.swift, also compiled into BazaarControls
+      - path: Shared # TalkToBazaarIntent.swift, also compiled into BazaarControls
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sciscribe.bazaar
@@ -62,7 +62,7 @@ targets:
     platform: iOS
     sources:
       - path: BazaarControls
-      - path: Shared/TalkToBazaarIntent.swift   # shared intent: same file, second target membership
+      - path: Shared/TalkToBazaarIntent.swift # shared intent: same file, second target membership
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sciscribe.bazaar.controls
