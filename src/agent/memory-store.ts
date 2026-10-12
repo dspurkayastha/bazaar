@@ -1,0 +1,180 @@
+/**
+ * In-memory Store: the reference implementation for tests and for running the API without Postgres.
+ * Its recorder mirrors DbDecisionRecorder: appends decisions, appends ledger rows, consumes the approval used.
+ */
+import { BazaarError } from '../core/errors.js';
+import { lineHash } from '../core/hash.js';
+import type {
+  Approval,
+  Household,
+  ISODateTime,
+  LedgerOrderInput,
+  Place,
+  Quote,
+  Serviceability,
+  ShopRequest,
+  ShopResult,
+} from '../core/types.js';
+import type { DecisionRecorder, GateRecord, PlacedRecord } from '../policy/gate.js';
+import type { SpendRow } from '../policy/spend.js';
+import type { Store } from './store.js';
+
+const NINETY_DAYS_MS = 90 * 24 * 3_600_000;
+
+export class MemoryStore implements Store {
+  readonly households = new Map<string, Household>();
+  readonly requests: ShopRequest[] = [];
+  readonly results: ShopResult[] = [];
+  readonly quotes = new Map<string, { householdId: string; quote: Quote }>();
+  readonly approvals: Approval[] = [];
+  readonly decisions: GateRecord[] = [];
+  readonly placed: PlacedRecord[] = [];
+  readonly orders: (LedgerOrderInput & { householdId: string })[] = [];
+  private readonly spend: (SpendRow & { householdId: string })[] = [];
+
+  constructor(households: Household[] = []) {
+    for (const h of households) this.households.set(h.id, structuredClone(h));
+  }
+
+  readonly recorder: DecisionRecorder = {
+    recordDecision: (r: GateRecord) => {
+      this.decisions.push(r);
+      // Same as the DB recorder: the quote the gate saw is stored by hash.
+      if (!this.quotes.has(r.quote.hash)) this.quotes.set(r.quote.hash, { householdId: r.householdId, quote: r.quote });
+    },
+    recordPlaced: (r: PlacedRecord) => {
+      this.placed.push(r);
+      this.orders.push({
+        householdId: r.householdId,
+        supplierId: r.order.supplierId,
+        supplierOrderId: r.order.supplierOrderId,
+        placedAt: r.order.placedAt,
+        placeId: r.placeId,
+        supplierAddressId: r.quote.supplierAddressId,
+        lines: r.quote.lines.map((l) => ({
+          name: l.name,
+          variantId: l.variantId,
+          quantity: l.quantity,
+          unitPrice: l.unitPrice,
+          lineTotal: l.lineTotal,
+          category: l.category,
+          addedBy: r.memberId,
+          ...(l.itemKey !== undefined ? { itemKey: l.itemKey } : {}),
+        })),
+        fees: r.quote.fees,
+        total: r.quote.total,
+        status: r.order.status,
+        quoteHash: r.quote.hash,
+        decision: r.decision,
+      });
+      this.spend.push({
+        householdId: r.householdId,
+        placedAt: r.order.placedAt,
+        total: r.quote.total,
+        status: r.order.status,
+        decision: { verdict: r.decision.verdict, ...(r.approvalId ? { approvalId: r.approvalId } : {}) },
+      });
+      if (r.consumeApprovalId) {
+        const a = this.approvals.find((x) => x.id === r.consumeApprovalId);
+        if (a) a.consumedAt = r.order.placedAt;
+      }
+    },
+  };
+
+  /** Seed history (orders placed outside Bazaar, or earlier today) for cap tests. */
+  addLedgerOrder(householdId: string, order: LedgerOrderInput, spend?: Pick<SpendRow, 'decision'>): void {
+    this.orders.push({ householdId, ...order });
+    this.spend.push({
+      householdId,
+      placedAt: order.placedAt,
+      total: order.total,
+      status: order.status,
+      ...(spend?.decision !== undefined ? { decision: spend.decision } : {}),
+    });
+  }
+
+  async loadHousehold(householdId: string): Promise<Household> {
+    const h = this.households.get(householdId);
+    if (!h) throw new BazaarError('NOT_FOUND', `household ${householdId} not found`);
+    return structuredClone(h);
+  }
+
+  async findMemberByChannel(kind: 'whatsapp' | 'siri' | 'web', address: string) {
+    for (const h of this.households.values()) {
+      const m = h.members.find((x) => x.channels.some((c) => c.kind === kind && c.address === address));
+      if (m) return { householdId: h.id, memberId: m.id };
+    }
+    return undefined;
+  }
+
+  async savePlace(place: Place): Promise<void> {
+    const h = this.households.get(place.householdId);
+    if (!h) throw new BazaarError('NOT_FOUND', `household ${place.householdId} not found`);
+    const copy = structuredClone(place);
+    if (copy.isDefault) for (const p of h.places) if (p.id !== copy.id) p.isDefault = false;
+    const i = h.places.findIndex((p) => p.id === copy.id);
+    if (i >= 0) h.places[i] = copy;
+    else h.places.push(copy);
+  }
+
+  async saveServiceability(placeId: string, records: Serviceability[]): Promise<void> {
+    for (const h of this.households.values()) {
+      const p = h.places.find((x) => x.id === placeId);
+      if (p) p.serviceability = structuredClone(records);
+    }
+  }
+
+  async saveRequest(request: ShopRequest): Promise<void> {
+    this.requests.push(structuredClone(request));
+  }
+
+  async saveResult(result: ShopResult): Promise<void> {
+    this.results.push(structuredClone(result));
+  }
+
+  async saveQuote(householdId: string, quote: Quote): Promise<void> {
+    if (!this.quotes.has(quote.hash)) this.quotes.set(quote.hash, { householdId, quote: structuredClone(quote) });
+  }
+
+  async getQuote(hash: string) {
+    const q = this.quotes.get(hash);
+    return q ? structuredClone(q) : undefined;
+  }
+
+  async saveApproval(approval: Approval): Promise<void> {
+    this.approvals.push(approval);
+  }
+
+  async loadApprovals(quote: Quote): Promise<Approval[]> {
+    const lh = lineHash(quote.lines);
+    // Live objects on purpose: consumption by the recorder must be visible on the next read.
+    return this.approvals.filter(
+      (a) => a.consumedAt === undefined && (a.quoteHash === quote.hash || a.conditions?.lineHash === lh),
+    );
+  }
+
+  async loadSpendRows(householdId: string, since: ISODateTime): Promise<SpendRow[]> {
+    return this.spend
+      .filter((r) => r.householdId === householdId && r.placedAt >= since)
+      .map(({ householdId: _h, ...row }) => row);
+  }
+
+  async loadQuantityHistory(householdId: string, now: ISODateTime): Promise<Record<string, number>> {
+    const since = Date.parse(now) - NINETY_DAYS_MS;
+    const out: Record<string, number> = {};
+    for (const o of this.orders) {
+      if (o.householdId !== householdId || Date.parse(o.placedAt) < since || /fail|cancel/i.test(o.status)) continue;
+      for (const l of o.lines) {
+        if (!l.itemKey) continue;
+        out[l.itemKey] = Math.max(out[l.itemKey] ?? 0, l.quantity);
+      }
+    }
+    return out;
+  }
+
+  async loadLedgerOrders(householdId: string, since?: ISODateTime): Promise<LedgerOrderInput[]> {
+    return this.orders
+      .filter((o) => o.householdId === householdId && (since === undefined || o.placedAt >= since))
+      .map(({ householdId: _h, ...o }) => o);
+  }
+}
