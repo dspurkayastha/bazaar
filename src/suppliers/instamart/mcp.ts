@@ -165,6 +165,18 @@ export function parseToolResult(result: { content?: unknown; structuredContent?:
   }
 }
 
+/** Turn a raw MCP tool result into parsed JSON, or throw SupplierError(tool, server message) when isError. */
+export function toolResultToJson(
+  name: string,
+  result: { content?: unknown; structuredContent?: unknown; isError?: boolean },
+): unknown {
+  if (result.isError) {
+    const msg = resultText(result) || 'tool returned an error with no message';
+    throw new SupplierError(SUPPLIER, name, msg);
+  }
+  return parseToolResult(result);
+}
+
 export class InstamartMcpClient {
   private client: Client | undefined;
   private connecting: Promise<Client> | undefined;
@@ -232,11 +244,7 @@ export class InstamartMcpClient {
           structuredContent?: unknown;
           isError?: boolean;
         };
-        if (result.isError) {
-          const msg = resultText(result) || 'tool returned an error with no message';
-          throw new SupplierError(SUPPLIER, name, msg);
-        }
-        return parseToolResult(result);
+        return toolResultToJson(name, result);
       } catch (e) {
         if (e instanceof SupplierError) throw e;
         // Session dropped / token expired mid-call: reconnect once, but only for idempotent reads and cart writes.
