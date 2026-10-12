@@ -68,10 +68,19 @@ export async function api<T = unknown>(
     }
   }
   if (!res.ok) {
-    const err = (data as { error?: { code?: string; message?: string } & Record<string, unknown> } | null)?.error;
+    // Server shape (docs/WEB_API.md): {error:{code,message}, ...siblings} e.g. {error:{code:'pin_incorrect'}, attemptsLeft:2}
+    // or {error:{code:'pin_locked'}, pinLocked:true, hardLocked, lockedUntil}. Siblings and error fields both land in `extra`.
+    const body = (data ?? {}) as { error?: { code?: string; message?: string } & Record<string, unknown> } & Record<
+      string,
+      unknown
+    >;
+    const { error: err, ...siblings } = body;
     if (res.status === 401 && opts.auth !== false) onUnauthorized();
-    const { code, message, ...extra } = err ?? {};
-    throw new ApiError(res.status, code ?? `http_${res.status}`, friendlyMessage(res.status, message), extra);
+    const { code, message, ...inner } = err ?? {};
+    throw new ApiError(res.status, code ?? `http_${res.status}`, friendlyMessage(res.status, message), {
+      ...siblings,
+      ...inner,
+    });
   }
   return data as T;
 }

@@ -21,7 +21,9 @@
   --orb-core-b: #134a37;
   --shadow: 0 1px 0 rgb(21 33 27 / 6%), 0 10px 24px -14px rgb(21 33 27 / 35%);
 
-  --font-display: 'Bricolage Grotesque', 'Noto Sans Bengali', 'Noto Sans Devanagari', ui-rounded, system-ui, sans-serif;
+  --font-display:
+    'Bricolage Grotesque Variable', 'Bricolage Grotesque', 'Noto Sans Bengali', 'Noto Sans Devanagari', ui-rounded,
+    system-ui, sans-serif;
   --font-body: system-ui, -apple-system, 'Noto Sans Bengali', 'Noto Sans Devanagari', 'Segoe UI', Roboto, sans-serif;
 
   --r-card: 18px;
