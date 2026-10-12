@@ -69,9 +69,9 @@ export function tokenise(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/['’`]/g, '')
-    .replace(/(\d)\.(\d)/g, '$1\u0001$2')
-    .replace(/[^\p{L}\p{N}\u0001]+/gu, ' ')
-    .replace(/\u0001/g, '.')
+    .replace(/(\d)\.(\d)/g, '$1‡$2')
+    .replace(/[^\p{L}\p{N}‡]+/gu, ' ')
+    .replace(/‡/g, '.')
     .trim()
     .split(' ')
     .filter(Boolean);
