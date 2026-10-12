@@ -1,5 +1,6 @@
 /** Small HTTP helpers shared by the routes: typed errors and body validation. No framework magic. */
 import type { AgentDeps } from '../agent/loop.js';
+import type { VoiceOptions } from '../voice/route.js';
 
 export class ApiError extends Error {
   constructor(
@@ -17,6 +18,8 @@ export interface ApiDeps extends AgentDeps {
   webhookSecret?: string;
   /** Household used when a request does not name one (v1 is a single household). */
   defaultHouseholdId: string;
+  /** /voice (docs/VOICE_PROTOCOL.md). Absent, or without a Sarvam key: /voice answers voice_unconfigured. */
+  voice?: VoiceOptions;
 }
 
 type Json = Record<string, unknown>;

@@ -46,9 +46,26 @@ export async function issueMemberToken(
 const digest = (s: string) => createHash('sha256').update(s).digest();
 
 /** The bearer value, exactly `Bearer <one token>`; anything else (case, extra spaces, other schemes) is refused. */
-function bearer(req: FastifyRequest): string | undefined {
-  const m = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
+export function bearerOf(authorization: string | undefined): string | undefined {
+  const m = /^Bearer (\S+)$/.exec(authorization ?? '');
   return m?.[1];
+}
+
+function bearer(req: FastifyRequest): string | undefined {
+  return bearerOf(req.headers.authorization);
+}
+
+/**
+ * Resolve an `Authorization` header carrying a member token to its member, or undefined. Shared by the HTTP auth
+ * hook and the /voice WebSocket upgrade (which must accept the socket and close it with 4401 instead of a 401).
+ */
+export async function authenticateMember(
+  store: Pick<Store, 'findMemberByTokenHash'>,
+  authorization: string | undefined,
+): Promise<AuthedMember | undefined> {
+  const token = bearerOf(authorization);
+  if (!token || !looksLikeMemberToken(token)) return undefined;
+  return store.findMemberByTokenHash(hashMemberToken(token));
 }
 
 export function authHook(store: Store, householdToken: string) {
@@ -65,8 +82,7 @@ export function authHook(store: Store, householdToken: string) {
       if (!timingSafeEqual(digest(token), expected)) return deny(reply);
       return;
     }
-    if (!looksLikeMemberToken(token)) return deny(reply);
-    const who = await store.findMemberByTokenHash(hashMemberToken(token));
+    const who = await authenticateMember(store, req.headers.authorization);
     if (!who) return deny(reply);
     req.member = who;
   };

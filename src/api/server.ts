@@ -4,8 +4,12 @@
  * WhatsApp webhook is authenticated by an HMAC signature over the raw body; /health is open.
  * Routes live in ./routes; this file wires auth, error mapping and registration.
  */
-import Fastify, { type FastifyInstance } from 'fastify';
+import { createHash } from 'node:crypto';
+import rateLimit from '@fastify/rate-limit';
+import websocket from '@fastify/websocket';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { BazaarError, SupplierError } from '../core/errors.js';
+import { registerVoiceRoute } from '../voice/route.js';
 import { authHook } from './auth.js';
 import { ApiError, type ApiDeps } from './http.js';
 import { registerApproveRoutes } from './routes/approve.js';
@@ -16,16 +20,39 @@ import { registerWebhookRoutes } from './routes/webhooks.js';
 
 export type { ApiDeps } from './http.js';
 
+/** HTTP requests per minute per bearer token (per IP without one). */
+export const RATE_LIMIT_PER_MINUTE = 60;
+
+/** Rate-limit key: a digest of the bearer credential (never the token itself), else the client IP. */
+function rateKey(req: FastifyRequest): string {
+  const auth = req.headers.authorization;
+  return auth ? `tok:${createHash('sha256').update(auth).digest('hex').slice(0, 32)}` : `ip:${req.ip}`;
+}
+
 export function buildServer(
   deps: ApiDeps,
-  opts: { logger?: boolean; /** Send pino output here (tests). */ logStream?: { write(msg: string): void } } = {},
+  opts: {
+    logger?: boolean;
+    /** Send pino output here (tests). */
+    logStream?: { write(msg: string): void };
+    /** Log level with logStream (default info). */
+    logLevel?: string;
+    /** Requests per minute per token (default 60). */
+    rateLimitMax?: number;
+  } = {},
 ): FastifyInstance {
   if (!deps.apiToken) throw new Error('BAZAAR_API_TOKEN is not set; refusing to start an unauthenticated API');
 
-  const logger = opts.logStream ? { level: 'info', stream: opts.logStream } : (opts.logger ?? false);
+  const logger = opts.logStream ? { level: opts.logLevel ?? 'info', stream: opts.logStream } : (opts.logger ?? false);
   const app = Fastify({ logger, bodyLimit: 64 * 1024 });
   app.decorateRequest('member', undefined);
-  app.addHook('onRequest', authHook(deps.store, deps.apiToken));
+  app.register(rateLimit, {
+    global: true,
+    max: opts.rateLimitMax ?? RATE_LIMIT_PER_MINUTE,
+    timeWindow: '1 minute',
+    keyGenerator: rateKey,
+  });
+  app.register(websocket, { options: { maxPayload: 64 * 1024 } });
 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof ApiError) return reply.code(err.status).send({ error: err.message });
@@ -45,11 +72,22 @@ export function buildServer(
     return reply.code(500).send({ error: 'internal error' });
   });
 
-  app.get('/health', { config: { auth: 'none' } }, async () => ({ ok: true }));
-  registerRequestRoutes(app, deps);
-  registerApproveRoutes(app, deps);
-  registerPlaceRoutes(app, deps);
-  registerLedgerRoutes(app, deps);
-  registerWebhookRoutes(app, deps);
+  // Routes live in one child context registered after the plugins, so every route gets the rate limit first and
+  // then authentication (both are route-level onRequest hooks, in that order): floods are cut before any token lookup.
+  const auth = authHook(deps.store, deps.apiToken);
+  app.register(async (scoped) => {
+    scoped.addHook('onRoute', (route) => {
+      const existing =
+        route.onRequest === undefined ? [] : Array.isArray(route.onRequest) ? route.onRequest : [route.onRequest];
+      route.onRequest = [...existing, auth];
+    });
+    scoped.get('/health', { config: { auth: 'none', rateLimit: false } }, async () => ({ ok: true }));
+    registerRequestRoutes(scoped, deps);
+    registerApproveRoutes(scoped, deps);
+    registerPlaceRoutes(scoped, deps);
+    registerLedgerRoutes(scoped, deps);
+    registerWebhookRoutes(scoped, deps);
+    registerVoiceRoute(scoped, deps);
+  });
   return app;
 }
