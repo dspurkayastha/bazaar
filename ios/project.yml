@@ -1,0 +1,78 @@
+# Bazaar iOS: generate the Xcode project with `xcodegen generate` (see README.md).
+#
+# >>> SET YOUR TEAM <<<
+# Put your Apple Developer Team ID (10 characters; Xcode > Settings > Accounts,
+# or developer.apple.com > Membership) in DEVELOPMENT_TEAM below, then re-run
+# `xcodegen generate`. A free "Personal Team" ID works for on-device installs.
+# Alternatively leave it empty and pick the Team under Signing & Capabilities for
+# BOTH targets in Xcode (that choice is lost every time you regenerate).
+name: Bazaar
+options:
+  bundleIdPrefix: com.sciscribe
+  developmentLanguage: en
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "18.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""          # <<< SET ME (Team ID), see note at the top
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_STRICT_CONCURRENCY: minimal
+targets:
+  Bazaar:
+    type: application
+    platform: iOS
+    sources:
+      - path: Bazaar
+      - path: Shared            # TalkToBazaarIntent.swift, also compiled into BazaarControls
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sciscribe.bazaar
+        PRODUCT_NAME: Bazaar
+        ENABLE_PREVIEWS: YES
+    dependencies:
+      - target: BazaarControls
+        embed: true
+    info:
+      path: Support/Bazaar-Info.plist
+      properties:
+        CFBundleDisplayName: Bazaar
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSMicrophoneUsageDescription: Bazaar listens to your voice so you can shop by talking.
+        NSFaceIDUsageDescription: Bazaar uses Face ID to confirm larger orders before they are placed.
+        UIBackgroundModes:
+          - audio
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        CFBundleURLTypes:
+          - CFBundleURLName: com.sciscribe.bazaar
+            CFBundleURLSchemes:
+              - bazaar
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+  BazaarControls:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: BazaarControls
+      - path: Shared/TalkToBazaarIntent.swift   # shared intent: same file, second target membership
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sciscribe.bazaar.controls
+        PRODUCT_NAME: BazaarControls
+        SKIP_INSTALL: YES
+    info:
+      path: Support/BazaarControls-Info.plist
+      properties:
+        CFBundleDisplayName: Bazaar Controls
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
