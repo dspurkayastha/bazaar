@@ -1,0 +1,9 @@
+{
+  "isError": true,
+  "content": [
+    {
+      "type": "text",
+      "text": "An identical order was placed in the last 5 minutes. Pass confirmDuplicate=true only if the user explicitly wants to order again."
+    }
+  ]
+}

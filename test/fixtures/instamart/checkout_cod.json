@@ -1,0 +1,10 @@
+{
+  "orders": [
+    {
+      "orderId": "ORD-0001-MASKED",
+      "status": "PLACED",
+      "storeName": "Instamart",
+      "paymentMethod": "Cash"
+    }
+  ]
+}

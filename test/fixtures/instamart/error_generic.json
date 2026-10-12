@@ -1,0 +1,9 @@
+{
+  "isError": true,
+  "content": [
+    {
+      "type": "text",
+      "text": "Item SPIN-0001 is out of stock at your location."
+    }
+  ]
+}

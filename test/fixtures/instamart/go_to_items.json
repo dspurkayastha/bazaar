@@ -1,0 +1,75 @@
+{
+  "nextOffset": 10,
+  "products": [
+    {
+      "displayName": "Onion (Pyaz)",
+      "brand": "Fresh",
+      "inStock": true,
+      "isAvail": true,
+      "productId": "PROD-0101",
+      "parentProductId": "PROD-0101-P",
+      "variations": [
+        {
+          "spinId": "SPIN-0101",
+          "skuId": "SKU-0101",
+          "quantityDescription": "1 kg",
+          "displayName": "Onion (Pyaz)",
+          "brandName": "Fresh",
+          "price": {
+            "mrp": 45,
+            "offerPrice": 38.5,
+            "unitLevelPrice": "₹3.85/100 g"
+          },
+          "isInStockAndAvailable": true,
+          "imageUrl": "https://example.invalid/img.png",
+          "rating": {
+            "value": 4.5,
+            "count": 1200
+          },
+          "sla": {
+            "value": 12,
+            "unit": "MINS"
+          },
+          "vegClassifier": "VEG",
+          "maxQuantity": 3,
+          "maxQuantityMessage": "Max 3 allowed"
+        }
+      ]
+    },
+    {
+      "displayName": "Kingfisher Strong Beer Can",
+      "brand": "Kingfisher",
+      "inStock": true,
+      "isAvail": true,
+      "productId": "PROD-0102",
+      "parentProductId": "PROD-0102-P",
+      "variations": [
+        {
+          "spinId": "SPIN-0102",
+          "skuId": "SKU-0102",
+          "quantityDescription": "500 ml",
+          "displayName": "Kingfisher Strong Beer Can",
+          "brandName": "Kingfisher",
+          "price": {
+            "mrp": 150,
+            "offerPrice": 150,
+            "unitLevelPrice": "₹30/100 ml"
+          },
+          "isInStockAndAvailable": true,
+          "imageUrl": "https://example.invalid/img.png",
+          "rating": {
+            "value": 4.5,
+            "count": 1200
+          },
+          "sla": {
+            "value": 12,
+            "unit": "MINS"
+          },
+          "vegClassifier": "VEG",
+          "maxQuantity": 5,
+          "maxQuantityMessage": "Max 5 allowed"
+        }
+      ]
+    }
+  ]
+}

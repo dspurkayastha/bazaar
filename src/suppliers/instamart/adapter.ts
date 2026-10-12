@@ -220,7 +220,8 @@ function rowsFromBill(
     for (const [k, v] of Object.entries(bill)) {
       if (Array.isArray(v)) rowsFromBill(v, out, depth + 1);
       else if (isObj(v) && toPaise(v) === undefined) rowsFromBill(v, out, depth + 1);
-      else if (toPaise(v) !== undefined && !/currency|count|id$/i.test(k)) out.push({ label: splitCamel(k), value: v });
+      else if (toPaise(v) !== undefined && !/^(currency|count|itemCount|totalItems)$|Id$/.test(k))
+        out.push({ label: splitCamel(k), value: v });
     }
   }
   return out;

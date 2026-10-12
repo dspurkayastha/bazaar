@@ -1,0 +1,14 @@
+{
+  "order": {
+    "orderId": "ORD-0001-MASKED",
+    "status": "ON_THE_WAY",
+    "eta": {
+      "value": 7,
+      "unit": "MINS"
+    },
+    "partner": {
+      "lat": 24.8,
+      "lng": 92.8
+    }
+  }
+}

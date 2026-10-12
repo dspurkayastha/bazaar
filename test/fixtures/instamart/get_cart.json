@@ -1,0 +1,65 @@
+{
+  "cart": {
+    "addressId": "ADDR-HOME-MASKED",
+    "items": [
+      {
+        "spinId": "SPIN-0001",
+        "skuId": "SKU-0001",
+        "displayName": "Amul Taaza Toned Milk",
+        "brandName": "Amul",
+        "quantityDescription": "1 L",
+        "quantity": 2,
+        "price": {
+          "mrp": 74,
+          "offerPrice": 72
+        },
+        "isInStockAndAvailable": true
+      },
+      {
+        "spinId": "SPIN-0101",
+        "skuId": "SKU-0101",
+        "displayName": "Onion (Pyaz)",
+        "brandName": "Fresh",
+        "quantityDescription": "1 kg",
+        "quantity": 1,
+        "price": {
+          "mrp": 45,
+          "offerPrice": 38.5
+        },
+        "isInStockAndAvailable": true
+      }
+    ],
+    "bill": {
+      "lines": [
+        {
+          "label": "Item total",
+          "value": 182.5
+        },
+        {
+          "label": "Handling Fee",
+          "value": "₹8"
+        },
+        {
+          "label": "Delivery Fee",
+          "value": "₹25"
+        },
+        {
+          "label": "Small Cart Fee",
+          "value": "₹15"
+        },
+        {
+          "label": "Total savings",
+          "value": "₹12"
+        },
+        {
+          "label": "To Pay",
+          "value": "₹230.50"
+        }
+      ]
+    },
+    "sla": {
+      "value": 14,
+      "unit": "MINS"
+    }
+  }
+}

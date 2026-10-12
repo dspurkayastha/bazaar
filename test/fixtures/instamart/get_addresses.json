@@ -1,0 +1,19 @@
+{
+  "addresses": [
+    {
+      "id": "ADDR-HOME-MASKED",
+      "addressLine": "MASKED, Silchar",
+      "phoneNumber": "******1234",
+      "addressCategory": "HOME",
+      "addressTag": "Home"
+    }
+  ],
+  "total": 1,
+  "pagination": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 1,
+    "totalPages": 1,
+    "hasMore": false
+  }
+}

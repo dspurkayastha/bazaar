@@ -1,0 +1,10 @@
+{
+  "orders": [
+    {
+      "orderId": "ORD-0002-MASKED",
+      "status": "PENDING_PAYMENT",
+      "paasId": "PAAS-0002-MASKED",
+      "transactionId": "TXN-0002-MASKED"
+    }
+  ]
+}

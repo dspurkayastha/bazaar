@@ -1,0 +1,58 @@
+{
+  "platforms": {
+    "mobile": {
+      "methods": [
+        {
+          "id": "com.google.android.apps.nbu.paisa.user",
+          "name": "Google Pay",
+          "type": "UPI_INTENT"
+        },
+        {
+          "id": "net.one97.paytm",
+          "name": "Paytm",
+          "type": "UPI_INTENT"
+        },
+        {
+          "id": "com.phonepe.app",
+          "name": "PhonePe",
+          "type": "UPI_INTENT"
+        }
+      ]
+    },
+    "desktop": {
+      "methods": [
+        {
+          "id": "UPI_QR",
+          "name": "Scan QR",
+          "type": "UPI_QR"
+        }
+      ]
+    }
+  },
+  "cod": {
+    "enabled": true,
+    "maxAmount": 1000
+  },
+  "allMethods": [
+    {
+      "id": "com.google.android.apps.nbu.paisa.user",
+      "name": "Google Pay",
+      "type": "UPI_INTENT"
+    },
+    {
+      "id": "net.one97.paytm",
+      "name": "Paytm",
+      "type": "UPI_INTENT"
+    },
+    {
+      "id": "com.phonepe.app",
+      "name": "PhonePe",
+      "type": "UPI_INTENT"
+    },
+    {
+      "id": "UPI_QR",
+      "name": "Scan QR",
+      "type": "UPI_QR"
+    }
+  ]
+}

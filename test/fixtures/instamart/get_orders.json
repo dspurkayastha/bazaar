@@ -1,0 +1,78 @@
+{
+  "orders": [
+    {
+      "orderId": "ORD-0900-MASKED",
+      "status": "DELIVERED",
+      "createdAt": "2026-10-08T13:15:00.000Z",
+      "address": {
+        "addressId": "ADDR-HOME-MASKED",
+        "latitude": 24.8,
+        "longitude": 92.8
+      },
+      "items": [
+        {
+          "spinId": "SPIN-0001",
+          "displayName": "Amul Taaza Toned Milk",
+          "quantity": 2,
+          "price": {
+            "mrp": 74,
+            "offerPrice": 72
+          },
+          "totalPrice": 144
+        },
+        {
+          "spinId": "SPIN-0101",
+          "displayName": "Onion (Pyaz)",
+          "quantity": 1,
+          "price": {
+            "mrp": 45,
+            "offerPrice": 38.5
+          },
+          "totalPrice": 38.5
+        }
+      ],
+      "bill": {
+        "lines": [
+          {
+            "label": "Item total",
+            "value": 182.5
+          },
+          {
+            "label": "Handling Fee",
+            "value": 8
+          },
+          {
+            "label": "Delivery Fee",
+            "value": "FREE"
+          },
+          {
+            "label": "To Pay",
+            "value": 190.5
+          }
+        ]
+      },
+      "totalAmount": 190.5
+    },
+    {
+      "orderId": "ORD-0901-MASKED",
+      "status": "ON_THE_WAY",
+      "createdAt": 1791810000000,
+      "deliveryAddress": {
+        "id": "ADDR-WORK-MASKED",
+        "latitude": 24.81,
+        "longitude": 92.79
+      },
+      "items": [
+        {
+          "spinId": "SPIN-0002",
+          "displayName": "Amul Taaza Toned Milk",
+          "quantity": 1,
+          "price": {
+            "offerPrice": 38
+          }
+        }
+      ],
+      "toPay": 46
+    }
+  ]
+}
