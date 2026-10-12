@@ -91,9 +91,13 @@ describe('attempt 4: POST /approve', () => {
     ]);
     expect(supplier.placed).toHaveLength(1);
     expect(rs.map((r) => r.statusCode)).toEqual([200, 200]);
-    // Through inject the second gate happened to read the cart after the first order cleared it (BLOCK). With a
-    // slow supplier the two interleave and both reach place(): see review-instamart 5c.
-    expect(rs.map((r) => r.json().decision.verdict).sort()).toEqual(['BLOCK', 'PAY']);
+    // Fix (gate lock + idempotent placement): the second tap queues behind the first and gets the first's order
+    // back without calling the supplier (alreadyPlaced). Before the fix it happened to read the emptied cart (BLOCK).
+    const bodies = rs.map((r) => r.json());
+    expect(bodies.map((b) => b.placed).sort()).toEqual([false, true]);
+    const replay = bodies.find((b) => !b.placed);
+    expect(replay.alreadyPlaced).toBe(true);
+    expect(replay.order.supplierOrderId).toBe(supplier.placed[0]!.order.supplierOrderId);
   });
 });
 

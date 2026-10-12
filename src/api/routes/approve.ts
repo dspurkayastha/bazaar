@@ -8,18 +8,19 @@ import { gateLine } from '../../agent/tools.js';
 import { PolicyBlock, PolicyHold } from '../../core/errors.js';
 import { newId } from '../../core/ids.js';
 import type { Approval, PlacedOrder, PolicyDecision } from '../../core/types.js';
-import { contextBuilder } from '../../policy/context.js';
+import { loadingContextBuilder } from '../../policy/context.js';
 import { needsRequote, placeWithGate } from '../../policy/gate.js';
 import { ApiError, body, reqString, type ApiDeps } from '../http.js';
 
 export const APPROVAL_TTL_MS = 30 * 60_000;
-const SPEND_LOOKBACK_MS = 33 * 24 * 3_600_000;
 
 export interface ApproveOutcome {
   approval: Approval;
   decision: PolicyDecision;
   placed: boolean;
   order?: PlacedOrder;
+  /** True when this quote had already been placed (a repeat approval): `order` is that order, nothing new was sent. */
+  alreadyPlaced?: boolean;
   /** True when the cart changed since the quote and the agent must build a new one. */
   requote: boolean;
   gateLine: string;
@@ -51,31 +52,21 @@ export async function approveQuote(deps: ApiDeps, quoteHash: string, memberId: s
   await deps.store.saveApproval(approval);
 
   const payment = deps.payment ?? { kind: 'cod' as const };
-  const [approvals, ledger, quantityHistory] = await Promise.all([
-    deps.store.loadApprovals(quote),
-    deps.store.loadSpendRows(household.id, new Date(Date.parse(now) - SPEND_LOOKBACK_MS).toISOString()),
-    deps.store.loadQuantityHistory(household.id, now),
-  ]);
   try {
+    // Approvals, spend and quantity history are loaded inside the household's gate lock; a double tap on
+    // /approve queues behind the first and gets the first's order back (idempotent on the quote).
     const res = await placeWithGate({
       supplier,
       payment,
       recorder: deps.store.recorder,
-      ctxBuilder: contextBuilder({
-        household,
-        place,
-        quote,
-        approvals,
-        requestingMember: member,
-        ledger,
-        quantityHistory,
-        now,
-      }),
+      ...(deps.store.gateLock ? { lock: deps.store.gateLock } : {}),
+      ctxBuilder: loadingContextBuilder(deps.store, { household, place, quote, requestingMember: member, now }),
     });
     return {
       approval,
       decision: res.decision,
-      placed: true,
+      placed: !res.replayed,
+      ...(res.replayed ? { alreadyPlaced: true } : {}),
       order: res.order,
       requote: false,
       gateLine: gateLine({ decision: res.decision, quote, order: res.order, payment }),

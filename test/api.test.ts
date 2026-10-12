@@ -92,11 +92,22 @@ describe('POST /request and POST /approve', () => {
     expect(store.approvals[0]!.consumedAt).toBeDefined();
     expect(store.orders).toHaveLength(1);
 
-    // Approvals are single use and the cart is gone: approving again cannot place a second order.
+    // Placement is idempotent per quote: approving again returns the existing order and sends nothing.
     const again = (await post('/approve', { quoteHash: hash, memberId: owner(h).id })).json();
     expect(again.placed).toBe(false);
-    expect(again.decision.verdict).toBe('BLOCK');
-    expect(again.requote).toBe(true);
+    expect(again.alreadyPlaced).toBe(true);
+    expect(again.order.supplierOrderId).toBe(out.order.supplierOrderId);
+    expect(again.decision.approvalId).toBe(out.approval.id);
+    expect(again.requote).toBe(false);
+    expect(supplier.placeCalls).toBe(1);
+    expect(store.orders).toHaveLength(1);
+
+    // A fresh quote of the same cart later is a new purchase, not a replay: the cart is gone, so the gate BLOCKs.
+    await store.saveQuote(h.id, { ...result.chosen, createdAt: '2026-10-12T14:05:00.000Z' });
+    const later = (await post('/approve', { quoteHash: hash, memberId: owner(h).id })).json();
+    expect(later.alreadyPlaced).toBeUndefined();
+    expect(later.decision.verdict).toBe('BLOCK');
+    expect(later.requote).toBe(true);
     expect(supplier.placeCalls).toBe(1);
   });
 

@@ -26,7 +26,7 @@ import type {
   SupplierId,
   SupplierProduct,
 } from '../core/types.js';
-import { contextBuilder } from '../policy/context.js';
+import { loadingContextBuilder } from '../policy/context.js';
 import { needsRequote, placeWithGate } from '../policy/gate.js';
 import type { PlaceResolution } from '../places/resolver.js';
 import type { SanitiseLog } from '../core/sanitise.js';
@@ -36,7 +36,6 @@ import type { Store } from './store.js';
 export const MAX_LINES = 40;
 export const MAX_LINE_QUANTITY = 99;
 const MAX_SEARCH_RESULTS = 8;
-const SPEND_LOOKBACK_MS = 33 * 24 * 3_600_000;
 
 /** Mutable per-request state the tools share with the loop. */
 export interface RunState {
@@ -412,12 +411,6 @@ export async function proposeCheckoutFor(env: ToolEnv, supplierId?: string, quot
       return { ok: false, status: 'ERROR', error: `${quote.supplierId} does not serve ${env.place.nickname}.` };
 
     const now = env.now();
-    const [approvals, ledger, quantityHistory] = await Promise.all([
-      env.store.loadApprovals(quote),
-      env.store.loadSpendRows(env.household.id, new Date(Date.parse(now) - SPEND_LOOKBACK_MS).toISOString()),
-      env.store.loadQuantityHistory(env.household.id, now),
-    ]);
-
     state.proposed = true;
     state.chosen = quote;
     try {
@@ -425,14 +418,13 @@ export async function proposeCheckoutFor(env: ToolEnv, supplierId?: string, quot
         supplier,
         payment: env.payment,
         recorder: env.store.recorder,
-        ctxBuilder: contextBuilder({
+        ...(env.store.gateLock ? { lock: env.store.gateLock } : {}),
+        // Spend and approvals are loaded inside the gate lock.
+        ctxBuilder: loadingContextBuilder(env.store, {
           household: env.household,
           place: env.place,
           quote,
-          approvals,
           requestingMember: env.member,
-          ledger,
-          quantityHistory,
           now,
         }),
       });
@@ -444,6 +436,8 @@ export async function proposeCheckoutFor(env: ToolEnv, supplierId?: string, quot
         status: 'PLACED',
         orderId: res.order.supplierOrderId,
         orderStatus: res.order.status,
+        // Idempotent replay: this exact quote was already placed; nothing new was sent to the store.
+        ...(res.replayed ? { alreadyPlaced: true } : {}),
         total: quote.total,
         totalInr: formatINR(quote.total),
         payment: env.payment.kind,

@@ -242,7 +242,9 @@ describe('attempt 5: spend caps under concurrency', () => {
     const unattendedToday = ledger
       .filter((r) => r.decision?.verdict === 'PAY' && !r.decision.approvalId)
       .reduce((s, r) => s + r.total, 0);
-    expect([v1, v2]).toEqual(['PAY', 'PAY']); // both gates said PAY
+    // Fix (gate lock): the runs are serialised per household and the second re-reads spend inside the lock, so it
+    // sees the first order and is HELD on daily_cap. (Before the fix both said PAY; that line asserted the exploit.)
+    expect([v1, v2].sort()).toEqual(['HOLD', 'PAY']);
     expect(unattendedToday, 'daily unattended cap is ₹1,500').toBeLessThanOrEqual(150000);
   });
 

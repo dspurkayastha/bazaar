@@ -14,11 +14,14 @@ import type {
   ShopResult,
 } from '../core/types.js';
 import type { DecisionRecorder } from '../policy/gate.js';
+import type { GateLock } from '../policy/lock.js';
 import type { SpendRow } from '../policy/spend.js';
 
 export interface Store {
   /** Records every gate evaluation and every placed order (and consumes the approval that paid). */
   readonly recorder: DecisionRecorder;
+  /** Serialises gate runs per household (Postgres: advisory lock). Absent → the process-wide in-memory lock. */
+  readonly gateLock?: GateLock;
 
   loadHousehold(householdId: string): Promise<Household>;
   /** Resolve a channel address (WhatsApp number, device id) to a member. */

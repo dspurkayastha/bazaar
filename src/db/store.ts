@@ -21,6 +21,7 @@ import type {
 } from '../core/types.js';
 import type { SpendRow } from '../policy/spend.js';
 import type { Db } from './client.js';
+import { conn, PgGateLock, type Tx } from './lock.js';
 import { DbDecisionRecorder, insertQuote, loadCandidateApprovals, loadSpendRows } from './ledger.js';
 import {
   approvals,
@@ -48,8 +49,16 @@ const EMPTY_PROFILE = {
 export class DbStore implements Store {
   readonly recorder: DbDecisionRecorder;
 
-  constructor(private readonly db: Db) {
-    this.recorder = new DbDecisionRecorder(db);
+  readonly gateLock: PgGateLock;
+
+  constructor(private readonly pool: Db) {
+    this.recorder = new DbDecisionRecorder(pool);
+    this.gateLock = new PgGateLock(pool);
+  }
+
+  /** Inside a gate run every query goes through the gate lock's transaction (src/db/lock.ts). */
+  private get db(): Db | Tx {
+    return conn(this.pool);
   }
 
   async loadHousehold(householdId: string): Promise<Household> {

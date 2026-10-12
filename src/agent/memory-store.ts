@@ -15,8 +15,8 @@ import type {
   ShopRequest,
   ShopResult,
 } from '../core/types.js';
-import type { DecisionRecorder, GateRecord, PlacedRecord } from '../policy/gate.js';
-import type { SpendRow } from '../policy/spend.js';
+import type { DecisionRecorder, ExistingPlacement, GateRecord, PlacedRecord } from '../policy/gate.js';
+import { countsAsSpend, type SpendRow } from '../policy/spend.js';
 import type { Store } from './store.js';
 
 const NINETY_DAYS_MS = 90 * 24 * 3_600_000;
@@ -39,8 +39,18 @@ export class MemoryStore implements Store {
   readonly recorder: DecisionRecorder = {
     recordDecision: (r: GateRecord) => {
       this.decisions.push(r);
-      // Same as the DB recorder: the quote the gate saw is stored by hash.
-      if (!this.quotes.has(r.quote.hash)) this.quotes.set(r.quote.hash, { householdId: r.householdId, quote: r.quote });
+      // Same as the DB recorder: the quote the gate saw is stored by hash (newest wins).
+      this.keepNewestQuote(r.householdId, r.quote);
+    },
+    findPlaced: (householdId: string, quote: Quote): ExistingPlacement | undefined => {
+      const p = this.placed.find(
+        (x) =>
+          x.householdId === householdId &&
+          x.quote.hash === quote.hash &&
+          x.order.placedAt >= quote.createdAt &&
+          countsAsSpend(x.order),
+      );
+      return p ? { order: structuredClone(p.order), decision: structuredClone(p.decision) } : undefined;
     },
     recordPlaced: (r: PlacedRecord) => {
       this.placed.push(r);
@@ -133,7 +143,19 @@ export class MemoryStore implements Store {
   }
 
   async saveQuote(householdId: string, quote: Quote): Promise<void> {
-    if (!this.quotes.has(quote.hash)) this.quotes.set(quote.hash, { householdId, quote: structuredClone(quote) });
+    this.keepNewestQuote(householdId, quote);
+  }
+
+  /**
+   * One stored quote per hash; a later re-quote of the same cart replaces it, so its createdAt is the latest. The
+   * gate's idempotency check (placed at or after quote.createdAt) depends on this: an identical cart bought again
+   * next week is a new purchase, not a replay of last week's order.
+   */
+  private keepNewestQuote(householdId: string, quote: Quote): void {
+    const prev = this.quotes.get(quote.hash);
+    if (!prev || prev.quote.createdAt < quote.createdAt) {
+      this.quotes.set(quote.hash, { householdId, quote: structuredClone(quote) });
+    }
   }
 
   async getQuote(hash: string) {

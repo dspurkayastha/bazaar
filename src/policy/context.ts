@@ -43,5 +43,40 @@ export function buildPolicyContext(inputs: PolicyInputs, liveCart: Quote): Polic
 
 /** A GateContextBuilder over already-loaded inputs. */
 export function contextBuilder(inputs: PolicyInputs): GateContextBuilder {
-  return { place: inputs.place, build: (liveCart) => buildPolicyContext(inputs, liveCart) };
+  return { place: inputs.place, quote: inputs.quote, build: (liveCart) => buildPolicyContext(inputs, liveCart) };
+}
+
+/** Where a gate run re-reads its mutable inputs (the agent Store satisfies this). */
+export interface GateInputsSource {
+  loadApprovals(quote: Quote): Promise<Approval[]>;
+  loadSpendRows(householdId: string, since: ISODateTime): Promise<SpendRow[]>;
+  loadQuantityHistory(householdId: string, now: ISODateTime): Promise<Record<string, number>>;
+}
+
+/** Enough history for "this local month" plus timezone slack. */
+export const SPEND_LOOKBACK_MS = 33 * 24 * 3_600_000;
+
+/**
+ * A GateContextBuilder that loads approvals, spend and quantity history when the gate calls build(), i.e. inside
+ * the household's gate lock, so the caps see every order recorded before this run (review 5a).
+ * `approvals: false` evaluates with no approvals at all (webhook-originated requests can never use one).
+ */
+export function loadingContextBuilder(
+  source: GateInputsSource,
+  inputs: Omit<PolicyInputs, 'approvals' | 'ledger' | 'quantityHistory'> & { approvals?: boolean },
+): GateContextBuilder {
+  const { approvals: useApprovals = true, ...rest } = inputs;
+  return {
+    place: inputs.place,
+    quote: inputs.quote,
+    build: async (liveCart) => {
+      const since = new Date(Date.parse(inputs.now) - SPEND_LOOKBACK_MS).toISOString();
+      const [approvals, ledger, quantityHistory] = await Promise.all([
+        useApprovals ? source.loadApprovals(inputs.quote) : Promise.resolve([]),
+        source.loadSpendRows(inputs.household.id, since),
+        source.loadQuantityHistory(inputs.household.id, inputs.now),
+      ]);
+      return buildPolicyContext({ ...rest, approvals, ledger, quantityHistory }, liveCart);
+    },
+  };
 }

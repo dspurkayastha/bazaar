@@ -5,15 +5,18 @@
 import { and, eq, gte, isNull, or, sql } from 'drizzle-orm';
 import { lineHash } from '../core/hash.js';
 import { newId } from '../core/ids.js';
-import type { Approval, ISODateTime, Quote } from '../core/types.js';
-import type { DecisionRecorder, GateRecord, PlacedRecord } from '../policy/gate.js';
-import type { SpendRow } from '../policy/spend.js';
+import type { Approval, ISODateTime, PlacedOrder, Quote } from '../core/types.js';
+import type { DecisionRecorder, ExistingPlacement, GateRecord, PlacedRecord } from '../policy/gate.js';
+import { countsAsSpend, type SpendRow } from '../policy/spend.js';
 import type { Db } from './client.js';
+import { conn, type Tx } from './lock.js';
 import { approvals, ledgerLines, ledgerOrders, policyDecisions, quotes } from './schema.js';
 
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
-
-/** Store a raw quote. The same cart re-quoted yields the same hash, so duplicates are ignored. */
+/**
+ * Store a raw quote. The same cart re-quoted yields the same hash: the newest quote (by its createdAt) wins, so the
+ * gate's idempotency check (an order placed at or after quote.createdAt) never mistakes a new purchase of an
+ * identical cart for a replay of an old one.
+ */
 export async function insertQuote(db: Db | Tx, householdId: string, quote: Quote, requestId?: string): Promise<void> {
   await db
     .insert(quotes)
@@ -28,11 +31,20 @@ export async function insertQuote(db: Db | Tx, householdId: string, quote: Quote
       total: quote.total,
       quote,
     })
-    .onConflictDoNothing({ target: quotes.hash });
+    .onConflictDoUpdate({
+      target: quotes.hash,
+      set: { quote: sql`excluded.quote`, requestId: sql`coalesce(excluded.request_id, ${quotes.requestId})` },
+      setWhere: sql`(excluded.quote->>'createdAt') > (${quotes.quote}->>'createdAt')`,
+    });
 }
 
 export class DbDecisionRecorder implements DecisionRecorder {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly pool: Db) {}
+
+  /** The gate lock's transaction while inside a gate run (src/db/lock.ts), else the pool. */
+  private get db(): Db | Tx {
+    return conn(this.pool);
+  }
 
   async recordDecision(r: GateRecord): Promise<void> {
     await this.db.transaction(async (tx) => {
@@ -52,6 +64,36 @@ export class DbDecisionRecorder implements DecisionRecorder {
         evaluatedAt: r.evaluatedAt,
       });
     });
+  }
+
+  async findPlaced(householdId: string, quote: Quote): Promise<ExistingPlacement | undefined> {
+    const rows = await this.db
+      .select()
+      .from(ledgerOrders)
+      .where(
+        and(
+          eq(ledgerOrders.householdId, householdId),
+          eq(ledgerOrders.quoteHash, quote.hash),
+          gte(ledgerOrders.placedAt, quote.createdAt),
+        ),
+      )
+      .orderBy(ledgerOrders.placedAt);
+    const row = rows.find((r) => countsAsSpend(r) && r.decision);
+    if (!row?.decision) return undefined;
+    const raw = (row.raw ?? {}) as Partial<PlacedOrder>;
+    const status: PlacedOrder['status'] =
+      raw.status === 'pending_payment' || raw.status === 'failed' ? raw.status : 'placed';
+    return {
+      decision: row.decision,
+      order: {
+        supplierId: row.supplierId,
+        supplierOrderId: row.supplierOrderId,
+        quoteId: typeof raw.quoteId === 'string' ? raw.quoteId : quote.id,
+        status,
+        ...(typeof raw.paymentRef === 'string' ? { paymentRef: raw.paymentRef } : {}),
+        placedAt: typeof raw.placedAt === 'string' ? raw.placedAt : row.placedAt,
+      },
+    };
   }
 
   async recordPlaced(r: PlacedRecord): Promise<void> {
@@ -110,7 +152,7 @@ export class DbDecisionRecorder implements DecisionRecorder {
 }
 
 /** Ledger rows for the spend helpers (load from the start of the local month or earlier). */
-export async function loadSpendRows(db: Db, householdId: string, since: ISODateTime): Promise<SpendRow[]> {
+export async function loadSpendRows(db: Db | Tx, householdId: string, since: ISODateTime): Promise<SpendRow[]> {
   const rows = await db
     .select({
       placedAt: ledgerOrders.placedAt,
@@ -134,7 +176,7 @@ export async function loadSpendRows(db: Db, householdId: string, since: ISODateT
 }
 
 /** Unconsumed approvals that could cover this quote: bound to its hash, or line-bound to its lines. */
-export async function loadCandidateApprovals(db: Db, quote: Quote): Promise<Approval[]> {
+export async function loadCandidateApprovals(db: Db | Tx, quote: Quote): Promise<Approval[]> {
   const rows = await db
     .select()
     .from(approvals)
