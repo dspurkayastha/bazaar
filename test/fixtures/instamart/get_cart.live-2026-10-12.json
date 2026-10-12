@@ -1,158 +1,158 @@
 {
- "selectedAddress": "d4qog5cbifjahfg3lj7g",
- "selectedAddressDetails": {
-  "annotation": "HOME",
-  "category": "HOME",
-  "id": "d4qog5cbifjahfg3lj7g",
-  "area": "Ambicapatty",
-  "address": "Ambicapatty, Silchar, Assam, India",
-  "sla": "",
-  "city": "Silchar",
-  "isRecalculationRequired": false,
-  "location": {
-   "latitude": 24.8,
-   "longitude": 92.7,
-   "cityId": 0
+  "selectedAddress": "d4qog5cbifjahfg3lj7g",
+  "selectedAddressDetails": {
+    "annotation": "HOME",
+    "category": "HOME",
+    "id": "d4qog5cbifjahfg3lj7g",
+    "area": "Ambicapatty",
+    "address": "Ambicapatty, Silchar, Assam, India",
+    "sla": "",
+    "city": "Silchar",
+    "isRecalculationRequired": false,
+    "location": {
+      "latitude": 24.8,
+      "longitude": 92.7,
+      "cityId": 0
+    },
+    "lat": 24.8,
+    "lng": 92.7,
+    "name": "MASKED NAME",
+    "mobile": "9000000000",
+    "flatNo": "MASKED",
+    "sendSms": false,
+    "addressEditable": true,
+    "addressCategory": "",
+    "recalculationRequired": false
   },
-  "lat": 24.8,
-  "lng": 92.7,
-  "name": "MASKED NAME",
-  "mobile": "9000000000",
-  "flatNo": "MASKED",
-  "sendSms": false,
-  "addressEditable": true,
-  "addressCategory": "",
-  "recalculationRequired": false
- },
- "cartTotalAmount": "₹1396",
- "items": [
-  {
-   "spinId": "YHRS31TZKZ",
-   "skuId": "FZOD2ZFC8T",
-   "productId": "9EL943UBWP",
-   "itemName": "Daawat Biryani Basmati Rice",
-   "itemVariant": "2 Pieces",
-   "quantity": 1,
-   "storeId": 1405194,
-   "isInStockAndAvailable": true,
-   "mrp": 520,
-   "discountedFinalPrice": 470,
-   "maxQuantity": 1
-  },
-  {
-   "spinId": "AMHT8KK9LO",
-   "skuId": "NTZ3VHPKGW",
-   "productId": "YMQNZW71C9",
-   "itemName": "Meatzza fresh chicken curry cut bone",
-   "itemVariant": "500 g",
-   "quantity": 1,
-   "storeId": 1405194,
-   "isInStockAndAvailable": true,
-   "mrp": 215,
-   "discountedFinalPrice": 215,
-   "maxQuantity": 6
-  },
-  {
-   "spinId": "OY7RKMZAAI",
-   "skuId": "UXDV3J9JWV",
-   "productId": "NFR92EYZEL",
-   "itemName": "Everest Shahi Biryani Masala Powder",
-   "itemVariant": "50 g",
-   "quantity": 1,
-   "storeId": 1405194,
-   "isInStockAndAvailable": true,
-   "mrp": 90,
-   "discountedFinalPrice": 88,
-   "maxQuantity": 4
-  },
-  {
-   "spinId": "RG69DALCDU",
-   "skuId": "GR0RR1YYUU",
-   "productId": "GBV6U9I0XI",
-   "itemName": "Gowardhan Ghee Jar",
-   "itemVariant": "200 ml",
-   "quantity": 1,
-   "storeId": 1405194,
-   "isInStockAndAvailable": true,
-   "mrp": 205,
-   "discountedFinalPrice": 172,
-   "maxQuantity": 3
-  },
-  {
-   "spinId": "W4FDN6IC6P",
-   "skuId": "866WVHA0G4",
-   "productId": "DW90ZRID86",
-   "itemName": "Purabi Plain Curd",
-   "itemVariant": "80 g",
-   "quantity": 5,
-   "storeId": 1405194,
-   "isInStockAndAvailable": true,
-   "mrp": 15,
-   "discountedFinalPrice": 15,
-   "maxQuantity": 6
-  },
-  {
-   "spinId": "HONJQOBAFD",
-   "skuId": "QGA2KF1I4V",
-   "productId": "QIQMHY66E3",
-   "itemName": "Mint Leaves(Pudina)",
-   "itemVariant": "1 Bunch",
-   "quantity": 1,
-   "storeId": 1405194,
-   "isInStockAndAvailable": true,
-   "mrp": 75,
-   "discountedFinalPrice": 52,
-   "maxQuantity": 1
-  },
-  {
-   "spinId": "4YQ8J7JRYU",
-   "skuId": "U1DR3IFVW2",
-   "productId": "8ZPBGGWDFN",
-   "itemName": "Purabi Cup Sweetened Curd",
-   "itemVariant": "400 g",
-   "quantity": 1,
-   "storeId": 1405194,
-   "isInStockAndAvailable": true,
-   "mrp": 55,
-   "discountedFinalPrice": 55,
-   "maxQuantity": 6
-  },
-  {
-   "spinId": "R9BJ4IRHZB",
-   "skuId": "SJXM654IU5",
-   "productId": "9ZKP2ZXW2V",
-   "itemName": "Vadilal American Nuts Ice Cream Tub",
-   "itemVariant": "1 ltr",
-   "quantity": 1,
-   "storeId": 1405194,
-   "isInStockAndAvailable": true,
-   "mrp": 270,
-   "discountedFinalPrice": 256,
-   "maxQuantity": 2
-  }
- ],
- "billBreakdown": {
-  "lineItems": [
-   {
-    "label": "Item Total",
-    "value": "₹1383.00"
-   },
-   {
-    "label": "Handling Fee",
-    "value": "₹12.98"
-   },
-   {
-    "label": "Delivery Partner Fee",
-    "value": "FREE"
-   }
+  "cartTotalAmount": "₹1396",
+  "items": [
+    {
+      "spinId": "YHRS31TZKZ",
+      "skuId": "FZOD2ZFC8T",
+      "productId": "9EL943UBWP",
+      "itemName": "Daawat Biryani Basmati Rice",
+      "itemVariant": "2 Pieces",
+      "quantity": 1,
+      "storeId": 1405194,
+      "isInStockAndAvailable": true,
+      "mrp": 520,
+      "discountedFinalPrice": 470,
+      "maxQuantity": 1
+    },
+    {
+      "spinId": "AMHT8KK9LO",
+      "skuId": "NTZ3VHPKGW",
+      "productId": "YMQNZW71C9",
+      "itemName": "Meatzza fresh chicken curry cut bone",
+      "itemVariant": "500 g",
+      "quantity": 1,
+      "storeId": 1405194,
+      "isInStockAndAvailable": true,
+      "mrp": 215,
+      "discountedFinalPrice": 215,
+      "maxQuantity": 6
+    },
+    {
+      "spinId": "OY7RKMZAAI",
+      "skuId": "UXDV3J9JWV",
+      "productId": "NFR92EYZEL",
+      "itemName": "Everest Shahi Biryani Masala Powder",
+      "itemVariant": "50 g",
+      "quantity": 1,
+      "storeId": 1405194,
+      "isInStockAndAvailable": true,
+      "mrp": 90,
+      "discountedFinalPrice": 88,
+      "maxQuantity": 4
+    },
+    {
+      "spinId": "RG69DALCDU",
+      "skuId": "GR0RR1YYUU",
+      "productId": "GBV6U9I0XI",
+      "itemName": "Gowardhan Ghee Jar",
+      "itemVariant": "200 ml",
+      "quantity": 1,
+      "storeId": 1405194,
+      "isInStockAndAvailable": true,
+      "mrp": 205,
+      "discountedFinalPrice": 172,
+      "maxQuantity": 3
+    },
+    {
+      "spinId": "W4FDN6IC6P",
+      "skuId": "866WVHA0G4",
+      "productId": "DW90ZRID86",
+      "itemName": "Purabi Plain Curd",
+      "itemVariant": "80 g",
+      "quantity": 5,
+      "storeId": 1405194,
+      "isInStockAndAvailable": true,
+      "mrp": 15,
+      "discountedFinalPrice": 15,
+      "maxQuantity": 6
+    },
+    {
+      "spinId": "HONJQOBAFD",
+      "skuId": "QGA2KF1I4V",
+      "productId": "QIQMHY66E3",
+      "itemName": "Mint Leaves(Pudina)",
+      "itemVariant": "1 Bunch",
+      "quantity": 1,
+      "storeId": 1405194,
+      "isInStockAndAvailable": true,
+      "mrp": 75,
+      "discountedFinalPrice": 52,
+      "maxQuantity": 1
+    },
+    {
+      "spinId": "4YQ8J7JRYU",
+      "skuId": "U1DR3IFVW2",
+      "productId": "8ZPBGGWDFN",
+      "itemName": "Purabi Cup Sweetened Curd",
+      "itemVariant": "400 g",
+      "quantity": 1,
+      "storeId": 1405194,
+      "isInStockAndAvailable": true,
+      "mrp": 55,
+      "discountedFinalPrice": 55,
+      "maxQuantity": 6
+    },
+    {
+      "spinId": "R9BJ4IRHZB",
+      "skuId": "SJXM654IU5",
+      "productId": "9ZKP2ZXW2V",
+      "itemName": "Vadilal American Nuts Ice Cream Tub",
+      "itemVariant": "1 ltr",
+      "quantity": 1,
+      "storeId": 1405194,
+      "isInStockAndAvailable": true,
+      "mrp": 270,
+      "discountedFinalPrice": 256,
+      "maxQuantity": 2
+    }
   ],
-  "toPay": {
-   "label": "To Pay",
-   "value": "₹1396"
-  }
- },
- "superData": {
-  "userStatus": "WAS_SUPER"
- },
- "cartId": "e4344887-5c6b-403d-a6c7-193dae136ce3"
+  "billBreakdown": {
+    "lineItems": [
+      {
+        "label": "Item Total",
+        "value": "₹1383.00"
+      },
+      {
+        "label": "Handling Fee",
+        "value": "₹12.98"
+      },
+      {
+        "label": "Delivery Partner Fee",
+        "value": "FREE"
+      }
+    ],
+    "toPay": {
+      "label": "To Pay",
+      "value": "₹1396"
+    }
+  },
+  "superData": {
+    "userStatus": "WAS_SUPER"
+  },
+  "cartId": "e4344887-5c6b-403d-a6c7-193dae136ce3"
 }
