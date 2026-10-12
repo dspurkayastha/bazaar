@@ -49,6 +49,12 @@ describe('founding household seed data', () => {
     expect(byKey['chicken']!.neverSubstitute).toBe(true);
     expect(byKey['mutton']!.neverSubstitute).toBe(true);
     expect(byKey['milk']!.size).toBe('250 ml x 4');
+    expect([byKey['dessert']!.brand, byKey['dessert']!.product, byKey['dessert']!.size]).toEqual([
+      'Vadilal',
+      'American Nuts',
+      '1 L',
+    ]);
+    expect([byKey['curd']!.brand, byKey['curd']!.product]).toEqual(['Purabi', 'Cup Sweetened']);
     // Every recipe item resolves to a default.
     for (const item of h.profile.recipes[0]!.items) expect(byKey[item.key], item.key).toBeDefined();
     expect(h.profile.recipes[0]!.servesDefault).toBe(2);

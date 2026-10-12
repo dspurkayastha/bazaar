@@ -33,6 +33,7 @@ try {
           key: d.key,
           aliases: d.aliases,
           brand: d.brand ?? null,
+          product: d.product ?? null,
           size: d.size ?? null,
           quantityPerHead: d.quantityPerHead ?? null,
           category: d.category,

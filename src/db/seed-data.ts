@@ -23,15 +23,13 @@ export const INSTAMART_ADDRESS_IDS = {
   didis: '4661350__AVjo1QVE6QwX7C7RoURA6O',
 } as const;
 
-/**
- * ItemDefault has no product-name field, so `brand` carries brand + product line
- * (e.g. "Amul Lactose Free") and `size` carries pack size + cut/descriptor.
- */
+/** `brand` is the maker, `product` the line within the brand, `size` the pack (plus cut where relevant). */
 const DEFAULTS: ItemDefault[] = [
   {
     key: 'milk',
     aliases: ['dudh', 'doodh', 'lactose free milk'],
-    brand: 'Amul Lactose Free',
+    brand: 'Amul',
+    product: 'Lactose Free',
     size: '250 ml x 4',
     category: 'dairy',
     origin: 'stated',
@@ -39,7 +37,8 @@ const DEFAULTS: ItemDefault[] = [
   {
     key: 'curd',
     aliases: ['doi', 'dahi', 'mishti doi', 'sweet curd'],
-    brand: 'Purabi Cup Sweetened',
+    brand: 'Purabi',
+    product: 'Cup Sweetened',
     size: '400 g',
     category: 'dairy',
     origin: 'stated',
@@ -48,14 +47,16 @@ const DEFAULTS: ItemDefault[] = [
     key: 'dettol',
     aliases: ['antiseptic', 'antiseptic liquid'],
     brand: 'Dettol',
-    size: 'antiseptic liquid 500 ml',
+    product: 'Antiseptic Liquid',
+    size: '500 ml',
     category: 'household',
     origin: 'stated',
   },
   {
     key: 'biryani rice',
     aliases: ['basmati', 'basmati rice', 'rice for biryani'],
-    brand: 'Daawat Biryani',
+    brand: 'Daawat',
+    product: 'Biryani',
     size: '1 kg',
     quantityPerHead: 0.5,
     category: 'grocery',
@@ -65,7 +66,8 @@ const DEFAULTS: ItemDefault[] = [
     key: 'chicken',
     aliases: ['murgi', 'chicken curry cut'],
     brand: 'Meatzza',
-    size: 'curry cut, bone-in, 500 g',
+    product: 'Chicken Curry Cut (Bone-in)',
+    size: '500 g',
     quantityPerHead: 0.5, // 500 g per 2 people
     category: 'meat',
     neverSubstitute: true,
@@ -74,7 +76,8 @@ const DEFAULTS: ItemDefault[] = [
   {
     key: 'mutton',
     aliases: ['goat', 'mangsho', 'mutton curry cut'],
-    size: 'curry cut, 500 g',
+    product: 'Mutton Curry Cut',
+    size: '500 g',
     quantityPerHead: 0.5, // 500 g per 2 people
     category: 'meat',
     neverSubstitute: true,
@@ -83,7 +86,8 @@ const DEFAULTS: ItemDefault[] = [
   {
     key: 'dessert',
     aliases: ['ice cream', 'something sweet'],
-    brand: 'Vadilal American Nuts',
+    brand: 'Vadilal',
+    product: 'American Nuts',
     size: '1 L',
     category: 'snacks',
     origin: 'stated',
@@ -92,7 +96,7 @@ const DEFAULTS: ItemDefault[] = [
     key: 'dog chews',
     aliases: ['chew bones', 'dog bones', 'chews'],
     brand: 'Purepet',
-    size: 'pressed chew bones',
+    product: 'Pressed Chew Bones',
     category: 'pet',
     origin: 'stated',
   },
@@ -100,7 +104,8 @@ const DEFAULTS: ItemDefault[] = [
   {
     key: 'biryani masala',
     aliases: ['shahi biryani masala'],
-    brand: 'Everest Shahi',
+    brand: 'Everest',
+    product: 'Shahi Biryani Masala',
     size: '50 g',
     category: 'grocery',
     origin: 'stated',

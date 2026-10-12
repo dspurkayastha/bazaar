@@ -115,6 +115,7 @@ export const itemDefaults = pgTable(
     key: text('key').notNull(),
     aliases: jsonb('aliases').$type<string[]>().notNull().default([]),
     brand: text('brand'),
+    product: text('product'),
     size: text('size'),
     quantityPerHead: real('quantity_per_head'),
     category: text('category').$type<ItemCategory>().notNull(),
@@ -183,6 +184,10 @@ export const ledgerOrders = pgTable(
     status: text('status').notNull(),
     quoteHash: text('quote_hash'),
     decision: jsonb('decision').$type<PolicyDecision>(),
+    /** Approval used to pay (null for unattended gate orders and for orders placed outside Bazaar). */
+    approvalId: text('approval_id'),
+    /** Placed by the gate on PAY without an approval; only these count toward the daily cap. */
+    unattended: boolean('unattended').notNull().default(false),
     raw: jsonb('raw'),
     ingestedAt: ts('ingested_at').notNull().defaultNow(),
   },
@@ -226,6 +231,9 @@ export const policyDecisions = pgTable(
     verdict: text('verdict').$type<PolicyVerdict>().notNull(),
     reasons: jsonb('reasons').$type<PolicyDecision['reasons']>().notNull(),
     approvalId: text('approval_id'),
+    /** True when an approval lifted a HOLD for this decision. */
+    approvalUsed: boolean('approval_used').notNull().default(false),
+    unattended: boolean('unattended').notNull().default(false),
     evaluatedAt: ts('evaluated_at').notNull(),
     /** Supplier order id when the gate went on to place. */
     supplierOrderId: text('supplier_order_id'),
