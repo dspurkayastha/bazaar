@@ -74,7 +74,16 @@ describe('attempt 3: prompt injection and model-supplied money fields', () => {
     // quoteHash on propose_checkout is a selector among quotes built in this run, not a value the gate trusts.
     expect(keys.filter((k) => forbidden.test(k.split('.').pop()!) && k !== 'propose_checkout.quoteHash')).toEqual([]);
     expect(TOOL_SPECS.map((t) => t.name).sort()).toEqual(
-      ['ask_user', 'build_cart', 'go_to_items', 'propose_checkout', 'read_cart', 'resolve_place', 'search'].sort(),
+      [
+        'ask_user',
+        'build_cart',
+        'go_to_items',
+        'propose_checkout',
+        'read_cart',
+        'resolve_place',
+        'search',
+        'search_many',
+      ].sort(),
     );
   });
 

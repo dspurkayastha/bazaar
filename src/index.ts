@@ -3,7 +3,7 @@
  *
  *   BAZAAR_API_TOKEN   required; household READ token, /ledger/summary only (members use their own mtk_ tokens)
  *   WHATSAPP_WEBHOOK_SECRET  HMAC key the WhatsApp relay signs bodies with (x-bazaar-signature); unset = webhook off
- *   ANTHROPIC_API_KEY  required for /request (the agent loop); ANTHROPIC_MODEL optional
+ *   ANTHROPIC_API_KEY  required for /request (the agent loop); ANTHROPIC_MODEL optional (default claude-sonnet-5-5)
  *   DATABASE_URL       Postgres (needs BAZAAR_HOUSEHOLD_ID); unset = in-memory store seeded with the founding household
  *   BAZAAR_SUPPLIERS   comma list of supplier ids, default "stub"; e.g. "instamart" (needs TOKEN_ENC_KEY + pnpm auth:instamart)
  *   PORT / HOST        default 8787 / 127.0.0.1

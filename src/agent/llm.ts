@@ -39,18 +39,27 @@ export interface LlmRequest {
   messages: LlmMessage[];
   /** 'none' forces a text-only answer (used when the tool budget is spent). */
   tool_choice?: { type: 'auto' } | { type: 'none' };
+  /** Aborts the HTTP call (wall-time cap). */
+  signal?: AbortSignal;
+}
+
+export interface LlmUsage {
+  input_tokens: number;
+  output_tokens: number;
 }
 
 export interface LlmResponse {
   content: AssistantBlock[];
   stop_reason: string | null;
+  /** Token usage when the provider reports it. */
+  usage?: LlmUsage;
 }
 
 export interface LlmClient {
   create(req: LlmRequest): Promise<LlmResponse>;
 }
 
-export const DEFAULT_MODEL = 'claude-sonnet-4-5';
+export const DEFAULT_MODEL = 'claude-sonnet-5-5';
 
 export function modelFromEnv(env: NodeJS.ProcessEnv = process.env): string {
   return env.ANTHROPIC_MODEL?.trim() || DEFAULT_MODEL;
@@ -62,20 +71,28 @@ export function anthropicClient(apiKey: string | undefined = process.env.ANTHROP
   const client = new Anthropic({ apiKey });
   return {
     async create(req) {
-      const res = await client.messages.create({
-        model: req.model,
-        max_tokens: req.max_tokens,
-        system: req.system,
-        tools: req.tools as Anthropic.Tool[],
-        messages: req.messages as Anthropic.MessageParam[],
-        ...(req.tool_choice ? { tool_choice: req.tool_choice as Anthropic.ToolChoice } : {}),
-      });
+      // Parallel tool use stays enabled (we never set disable_parallel_tool_use); the loop runs the calls concurrently.
+      const res = await client.messages.create(
+        {
+          model: req.model,
+          max_tokens: req.max_tokens,
+          system: req.system,
+          tools: req.tools as Anthropic.Tool[],
+          messages: req.messages as Anthropic.MessageParam[],
+          ...(req.tool_choice ? { tool_choice: req.tool_choice as Anthropic.ToolChoice } : {}),
+        },
+        req.signal ? { signal: req.signal } : undefined,
+      );
       const content: AssistantBlock[] = [];
       for (const b of res.content) {
         if (b.type === 'text') content.push({ type: 'text', text: b.text });
         else if (b.type === 'tool_use') content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
       }
-      return { content, stop_reason: res.stop_reason };
+      return {
+        content,
+        stop_reason: res.stop_reason,
+        usage: { input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens },
+      };
     },
   };
 }

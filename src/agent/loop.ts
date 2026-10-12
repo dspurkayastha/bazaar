@@ -32,12 +32,21 @@ import { getServiceable } from '../places/serviceability.js';
 import { resolvePlace, type PlaceResolution } from '../places/resolver.js';
 import { effectiveProfile } from '../profile/effective.js';
 import { normalise } from '../profile/normaliser.js';
-import { modelFromEnv, type AssistantBlock, type LlmClient, type LlmMessage, type ToolResultBlock } from './llm.js';
+import {
+  modelFromEnv,
+  type AssistantBlock,
+  type LlmClient,
+  type LlmMessage,
+  type LlmResponse,
+  type ToolResultBlock,
+} from './llm.js';
 import { buildSystemPrompt, summarisePolicy } from './prompts.js';
 import type { Store } from './store.js';
 import {
   TOOL_SPECS,
+  errorOf,
   executeTool,
+  isReadOnlyTool,
   gateLine,
   gateLineNotRun,
   newRunState,
@@ -45,18 +54,32 @@ import {
   quoteView,
   type RunState,
   type ToolEnv,
+  type ToolResult,
 } from './tools.js';
+import {
+  scrub,
+  sensitiveStrings,
+  type Outcome,
+  type RequestTelemetry,
+  type TokenUsage,
+  type ToolCallTrace,
+} from './trace.js';
 
-export const MAX_TOOL_CALLS = 12;
-const MAX_TOKENS = 1500;
+export const MAX_TOOL_CALLS = 20;
+/** Wall-clock cap for the whole model/tool loop. */
+export const MAX_WALL_MS = 60_000;
+/** A 12-item build_cart is a long tool_use block; 1500 tokens could truncate it. */
+const MAX_TOKENS = 4096;
 
 export interface AgentDeps {
   store: Store;
   suppliers: Supplier[];
   llm: LlmClient;
-  /** Defaults to ANTHROPIC_MODEL, then claude-sonnet-4-5. */
+  /** Defaults to ANTHROPIC_MODEL, then claude-sonnet-5-5. */
   model?: string;
   maxToolCalls?: number;
+  /** Wall-clock cap for the loop (default 60 s). */
+  maxWallMs?: number;
   now?: () => ISODateTime;
   /** Household default payment method; v1 is cash on delivery. */
   payment?: PaymentMethod;
@@ -75,6 +98,8 @@ export interface ShopOutcome {
   trace: TraceEntry[];
   toolCalls: number;
   sanitiseLog: SanitiseLog;
+  /** Safe to log: tool names, timings, error kinds, outcome, token usage. No arguments, tokens or addresses. */
+  telemetry: RequestTelemetry;
 }
 
 function errMessage(e: unknown): string {
@@ -174,6 +199,77 @@ function listRemoved(removed: { name: string; quantity: number }[]): string {
   return removed.map((r) => `${r.quantity} x ${r.name}`).join(', ');
 }
 
+// ---------- ending the loop honestly ----------
+
+type AbnormalKind = 'budget' | 'wall_time' | 'repeated_error' | 'llm_error' | 'no_final_text';
+interface Abnormal {
+  kind: AbnormalKind;
+  detail?: string;
+}
+
+interface FailureNote {
+  kind: string;
+  message: string;
+  supplier: string;
+}
+
+const NARRATION =
+  /^(let me(?! know)|let's|now,? (let me|let's|i'?ll|i will|i'm going to|i am going to)|i'?ll|i will|i'm going to|i am going to|next,? (let me|i'?ll|i will)|first,? (let me|i'?ll|i will)|okay,? (let me|let's|now)|good!? (now|let me)|great!? (now|let me))\b/i;
+
+/**
+ * The model's final text, minus trailing "let me.../now I will..." narration. `midPlan` means the message is not a
+ * final answer at all (nothing left after stripping, or it ends in a colon): the caller treats that as abnormal.
+ */
+export function cleanFinalText(text: string): { text: string; midPlan: boolean } {
+  const flat = stripGateLines(text);
+  if (flat === '') return { text: '', midPlan: false };
+  const sentences = flat.match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g)?.map((x) => x.trim()) ?? [flat];
+  let end = sentences.length;
+  while (end > 0 && NARRATION.test(sentences[end - 1]!)) end--;
+  const kept = sentences.slice(0, end).join(' ').trim();
+  const midPlan = kept === '' || /[:,;]$/.test(kept);
+  return { text: midPlan ? '' : kept, midPlan };
+}
+
+function capitalise(s: string): string {
+  return s === '' ? s : s[0]!.toUpperCase() + s.slice(1);
+}
+
+/** One line, plain words, on why the cart is missing. */
+function failureReason(note: FailureNote): string {
+  const who = capitalise(note.supplier);
+  const msg = note.message.replace(/\s+/g, ' ').trim().slice(0, 200);
+  const detail = msg === '' ? '' : ` (${msg})`;
+  switch (note.kind) {
+    case 'supplier':
+      return /bill|reconcil|parse|unreadable|unexpected/i.test(msg)
+        ? `${who} returned a bill I couldn't read${detail}`
+        : `${who} failed while I was building the cart${detail}`;
+    case 'quote_mismatch':
+      return `the ${who} cart changed while I was pricing it${detail}`;
+    case 'invalid_line':
+      return `${who} would not accept the cart lines${detail}`;
+    default:
+      return `a ${note.kind} error stopped me${detail}`;
+  }
+}
+
+function abnormalReason(a: Abnormal, last: FailureNote | undefined, maxCalls: number, maxWallMs: number): string {
+  if (last) return failureReason(last);
+  switch (a.kind) {
+    case 'budget':
+      return `I used all ${maxCalls} tool calls without finishing`;
+    case 'wall_time':
+      return `it took longer than ${Math.round(maxWallMs / 1000)} seconds`;
+    case 'llm_error':
+      return 'the assistant service did not answer';
+    case 'repeated_error':
+      return 'the same error kept coming back';
+    case 'no_final_text':
+      return 'I did not reach a final answer';
+  }
+}
+
 /** How the request reached us. Absent = the member authenticated with their own token. */
 export interface RunOptions {
   /** A signed channel webhook (WhatsApp): see PolicyContext.webhook. */
@@ -189,8 +285,14 @@ export async function runShopRequestDetailed(
   const log = deps.log ?? (() => undefined);
   const sanitiseLog = deps.sanitiseLog ?? new SanitiseLog();
   const maxCalls = deps.maxToolCalls ?? MAX_TOOL_CALLS;
+  const maxWallMs = deps.maxWallMs ?? MAX_WALL_MS;
   const payment: PaymentMethod = deps.payment ?? { kind: 'cod' };
   const trace: TraceEntry[] = [];
+  const startedAt = performance.now();
+  const model = deps.model ?? modelFromEnv();
+  const toolTrace: ToolCallTrace[] = [];
+  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0, llmCalls: 0 };
+  let usageReported = false;
 
   const household = await deps.store.loadHousehold(request.householdId);
   const member = household.members.find((m) => m.id === request.memberId);
@@ -198,14 +300,29 @@ export async function runShopRequestDetailed(
     throw new BazaarError('UNKNOWN_MEMBER', `member ${request.memberId} is not in household ${household.id}`);
   await deps.store.saveRequest(request);
 
-  const finish = async (result: ShopResult, toolCalls: number): Promise<ShopOutcome> => {
+  const finish = async (
+    result: ShopResult,
+    toolCalls: number,
+    outcome: Outcome,
+    abnormal?: Abnormal,
+  ): Promise<ShopOutcome> => {
+    const telemetry: RequestTelemetry = {
+      requestId: request.id,
+      placeId: result.placeId,
+      model,
+      toolCalls: toolTrace,
+      totalMs: Math.round(performance.now() - startedAt),
+      outcome,
+      ...(abnormal ? { abnormal: abnormal.kind } : {}),
+      ...(usageReported ? { usage } : {}),
+    };
     try {
       await deps.store.saveResult(result);
     } catch (e) {
       // The order (if any) is already placed and recorded by the gate; do not turn that into a failure.
       log('save_result_failed', errMessage(e));
     }
-    return { result, trace, toolCalls, sanitiseLog };
+    return { result, trace, toolCalls, sanitiseLog, telemetry };
   };
 
   // 1. Place.
@@ -225,6 +342,7 @@ export async function runShopRequestDetailed(
         summary: `I could not tell which place you meant (${names.join(' or ')}), so I have not touched any cart. ${resolution.question} ${gateLineNotRun('waiting for the place')}`,
       },
       0,
+      'asked',
     );
   }
 
@@ -246,6 +364,7 @@ export async function runShopRequestDetailed(
         summary: `No store I can use delivers to ${place.nickname} right now, so nothing was ordered. ${gateLineNotRun('no serviceable store')}`,
       },
       0,
+      'failed',
     );
   }
 
@@ -286,11 +405,12 @@ export async function runShopRequestDetailed(
     ...(opts.webhook ? { webhook: opts.webhook } : {}),
   };
 
-  // 4. The tool-use loop.
+  // 4. The tool-use loop: at most maxCalls tool calls and maxWallMs of wall time.
   const system = buildSystemPrompt(household, place, summarisePolicy(household.policy), {
     requestingMember: member,
     placeReason: resolution.reason,
     now: now(),
+    maxToolCalls: maxCalls,
   });
   const messages: LlmMessage[] = [
     {
@@ -305,14 +425,50 @@ export async function runShopRequestDetailed(
       ),
     },
   ];
-  const model = deps.model ?? modelFromEnv();
+  const sensitive = sensitiveStrings(household, place);
+  const deadline = startedAt + maxWallMs;
+  const remaining = () => deadline - performance.now();
+  let wallHit = false;
+  const TIMED_OUT: ToolResult = {
+    ok: false,
+    error: { kind: 'timeout', message: `the ${Math.round(maxWallMs / 1000)} s wall-time cap was reached` },
+  };
+  const runTimed = async (use: { name: string; input: unknown }): Promise<{ result: ToolResult; ms: number }> => {
+    const t0 = performance.now();
+    let timer: NodeJS.Timeout | undefined;
+    const limit = new Promise<ToolResult>((resolve) => {
+      timer = setTimeout(
+        () => {
+          wallHit = true;
+          resolve(TIMED_OUT);
+        },
+        Math.max(0, remaining()),
+      );
+    });
+    try {
+      const result = await Promise.race([executeTool(use.name, use.input, env), limit]);
+      return { result, ms: Math.round(performance.now() - t0) };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const onlySupplier = serviceable.suppliers.length === 1 ? serviceable.suppliers[0]!.id : 'the store';
+
   let toolCalls = 0;
   let finalText = '';
   let completed = false; // the model ended its turn normally
+  let abnormal: Abnormal | undefined;
+  let lastFailure: FailureNote | undefined; // latest supplier-facing failure, for the deterministic summary
+  const buildErrorCounts = new Map<string, number>();
+  const incomplete = () => !state.gateLine && state.questions.length === 0;
 
   for (let turn = 0; turn < maxCalls + 3; turn++) {
+    if (remaining() <= 0) {
+      abnormal = { kind: 'wall_time' };
+      break;
+    }
     const budgetSpent = toolCalls >= maxCalls;
-    let response;
+    let response: LlmResponse;
     try {
       response = await deps.llm.create({
         model,
@@ -320,45 +476,88 @@ export async function runShopRequestDetailed(
         system,
         tools: TOOL_SPECS,
         messages,
+        signal: AbortSignal.timeout(Math.max(1, Math.ceil(remaining()))),
         ...(budgetSpent ? { tool_choice: { type: 'none' as const } } : {}),
       });
     } catch (e) {
       log('llm_failed', errMessage(e));
+      abnormal = remaining() <= 0 ? { kind: 'wall_time' } : { kind: 'llm_error', detail: errMessage(e) };
       break;
     }
+    if (response.usage) {
+      usageReported = true;
+      usage.inputTokens += response.usage.input_tokens;
+      usage.outputTokens += response.usage.output_tokens;
+    }
+    usage.llmCalls++;
     messages.push({ role: 'assistant', content: response.content });
     const text = textOf(response.content);
     const uses = response.content.filter(
       (b): b is Extract<AssistantBlock, { type: 'tool_use' }> => b.type === 'tool_use',
     );
     if (uses.length === 0) {
-      finalText = text;
-      completed = true;
+      if (response.stop_reason === 'max_tokens') {
+        abnormal = { kind: 'no_final_text', detail: 'answer cut off at max_tokens' };
+      } else {
+        finalText = text;
+        completed = true;
+        // A text-only answer forced by an exhausted budget is only a real answer if the job got done.
+        if (budgetSpent && incomplete()) abnormal = { kind: 'budget' };
+      }
       break;
     }
     if (budgetSpent) {
-      // The model ignored tool_choice: none. Stop; code finishes the job.
-      finalText = text;
+      // The model ignored tool_choice: none.
+      abnormal = { kind: 'budget' };
       break;
+    }
+
+    // Run this turn's tool calls. Read-only calls run concurrently; calls that touch cart, gate or question state run
+    // afterwards in the model's order. Results go back in one user message, in tool_use order.
+    const allowed = uses.slice(0, Math.max(0, maxCalls - toolCalls));
+    const allowedIds = new Set(allowed.map((u) => u.id));
+    toolCalls += allowed.length;
+    const done = new Map<string, { result: ToolResult; ms: number }>();
+    await Promise.all(
+      allowed.filter((u) => isReadOnlyTool(u.name)).map(async (u) => done.set(u.id, await runTimed(u))),
+    );
+    for (const u of allowed.filter((x) => !isReadOnlyTool(x.name))) {
+      done.set(u.id, wallHit ? { result: TIMED_OUT, ms: 0 } : await runTimed(u));
     }
 
     const results: ToolResultBlock[] = [];
     for (const use of uses) {
-      if (toolCalls >= maxCalls) {
-        results.push({
-          type: 'tool_result',
-          tool_use_id: use.id,
-          is_error: true,
-          content: JSON.stringify({
-            ok: false,
-            error: `tool budget of ${maxCalls} calls is spent; write your final summary now`,
-          }),
-        });
+      if (!allowedIds.has(use.id)) {
+        const result: ToolResult = {
+          ok: false,
+          error: `tool budget of ${maxCalls} calls is spent; write your final summary now`,
+        };
+        toolTrace.push({ name: use.name, ms: 0, ok: false, errorKind: 'budget' });
+        results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: JSON.stringify(result) });
         continue;
       }
-      toolCalls++;
-      const result = await executeTool(use.name, use.input, env);
+      const { result, ms } = done.get(use.id)!;
       trace.push({ tool: use.name, input: use.input, result });
+      const err = errorOf(result);
+      toolTrace.push({
+        name: use.name,
+        ms,
+        ok: result.ok,
+        ...(err
+          ? { errorKind: err.kind, ...(err.message ? { errorMessage: scrub(err.message, sensitive) } : {}) }
+          : {}),
+      });
+      if (err && (use.name === 'build_cart' || use.name === 'search_many')) {
+        lastFailure = { kind: err.kind, message: scrub(err.message, sensitive, 200), supplier: onlySupplier };
+      } else if (use.name === 'build_cart' && result.ok) {
+        lastFailure = undefined;
+      }
+      if (err && use.name === 'build_cart') {
+        const key = `${err.kind}\u0000${err.message}`;
+        const n = (buildErrorCounts.get(key) ?? 0) + 1;
+        buildErrorCounts.set(key, n);
+        if (n >= 2) abnormal = { kind: 'repeated_error', detail: `${err.kind}: ${err.message}` };
+      }
       results.push({
         type: 'tool_result',
         tool_use_id: use.id,
@@ -367,16 +566,30 @@ export async function runShopRequestDetailed(
       });
     }
     messages.push({ role: 'user', content: results });
+    if (abnormal) break;
+    if (wallHit || remaining() <= 0) {
+      abnormal = { kind: 'wall_time' };
+      break;
+    }
     if (state.stop) {
       finalText = text;
       completed = true;
       break;
     }
   }
+  if (!completed && !abnormal) abnormal = { kind: 'budget' }; // ran out of turns
 
-  // 5. A built cart always meets the gate.
+  // The model's final text is used only on a normal finish, minus any trailing "let me..." narration.
+  let cleanText = '';
+  if (!abnormal) {
+    const c = cleanFinalText(finalText);
+    cleanText = c.text;
+    if (c.midPlan && !state.stop) abnormal = { kind: 'no_final_text', detail: 'final message ended mid-plan' };
+  }
+
+  // 5. A built cart meets the gate, unless the run went wrong: then nothing is submitted behind the user's back.
   const questions = [...state.questions];
-  if (questions.length === 0 && state.quotes.size > 0 && !state.proposed) {
+  if (!abnormal && questions.length === 0 && state.quotes.size > 0 && !state.proposed) {
     const cheapest = [...state.quotes.values()].sort((a, b) => a.total - b.total)[0]!;
     const r = await proposeCheckoutFor(env, cheapest.supplierId, cheapest.hash);
     trace.push({ tool: 'propose_checkout (loop)', input: { quoteHash: cheapest.hash }, result: r });
@@ -384,7 +597,7 @@ export async function runShopRequestDetailed(
 
   // 6. Reconcile leftovers.
   let finalCarts = new Map<SupplierId, Quote>(state.quotes);
-  if (state.quotes.size === 0 && questions.length === 0 && completed) {
+  if (state.quotes.size === 0 && questions.length === 0 && completed && !abnormal) {
     // Nothing was built and nothing is pending: the existing carts are not justified by this request.
     for (const s of serviceable.suppliers) {
       if (!state.existingCarts.get(s.id)?.lines.length) continue;
@@ -406,8 +619,20 @@ export async function runShopRequestDetailed(
   // 7. Summary.
   const quotes = [...state.quotes.values()];
   const parts: string[] = [];
-  let body = stripGateLines(finalText);
-  if (body === '') {
+  let body = cleanText;
+  if (abnormal) {
+    // Deterministic: never the model's narration.
+    const why = abnormalReason(abnormal, lastFailure, maxCalls, maxWallMs);
+    const cart = state.chosen
+      ? `cart of ${state.chosen.lines.length} item(s), ${formatINR(state.chosen.total)}`
+      : quotes.length > 0
+        ? `cart of ${quotes[0]!.lines.length} item(s), ${formatINR(quotes[0]!.total)}`
+        : '';
+    if (abnormal.kind === 'no_final_text' && state.chosen && state.gateLine) body = `${capitalise(cart)}.`;
+    else if (state.order) body = `I stopped before finishing (${why}), but a ${cart} was placed.`;
+    else if (cart) body = `I couldn't finish — ${why}. A ${cart} was priced but not submitted. Nothing was ordered.`;
+    else body = `I couldn't build the cart — ${why}. Nothing was ordered.`;
+  } else if (body === '') {
     body = state.chosen
       ? `Cart of ${state.chosen.lines.length} item(s), ${formatINR(state.chosen.total)}.`
       : questions.length > 0
@@ -450,7 +675,21 @@ export async function runShopRequestDetailed(
     questions,
     summary: parts.join(' '),
   };
-  return finish(result, toolCalls);
+  const failedGate = state.gateLine?.startsWith('Gate: ERROR') === true;
+  const outcome: Outcome = state.order
+    ? 'paid'
+    : failedGate
+      ? 'failed'
+      : state.decision?.verdict === 'HOLD'
+        ? 'held'
+        : state.decision?.verdict === 'BLOCK'
+          ? 'blocked'
+          : quotes.length > 0
+            ? 'quoted'
+            : questions.length > 0
+              ? 'asked'
+              : 'failed';
+  return finish(result, toolCalls, outcome, abnormal);
 }
 
 export async function runShopRequest(
