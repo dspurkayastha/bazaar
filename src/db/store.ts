@@ -182,6 +182,8 @@ export class DbStore implements Store {
       id: a.id,
       quoteHash: a.quoteHash,
       memberId: a.memberId,
+      placeId: a.placeId ?? null,
+      supplierId: a.supplierId ?? null,
       createdAt: a.createdAt,
       expiresAt: a.expiresAt,
       conditions: a.conditions ?? null,

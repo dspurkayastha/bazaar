@@ -26,6 +26,8 @@ function scheduled(
 ) {
   return approval(h, q.hash, {
     expiresAt: '2026-10-19T14:00:00.000Z',
+    placeId: q.placeId,
+    supplierId: q.supplierId,
     conditions: { lineHash: lineHash(q.lines), maxTotal: 120000, inStock: true, ...conditions },
     ...extra,
   });
@@ -106,6 +108,57 @@ describe('line-bound approvals', () => {
     const d = decide(ctx({ household: h, place: home, quote: fire, approvals: [ap], now: FIRE }));
     expect(d.verdict).toBe('HOLD');
     expect(rules(d)).toContain('approval_mismatch');
+  });
+
+  describe('scope: place, supplier and requester (review 2i)', () => {
+    const trustedElsewhere = { ...placeNamed(h, 'hospital'), trusted: true };
+    const hAll = { ...h, places: h.places.map((p) => (p.id === trustedElsewhere.id ? trustedElsewhere : p)) };
+    const adderOf = hAll.members.find((m) => m.role === 'adder')!;
+
+    it('names no place or supplier → refused (approval_mismatch)', () => {
+      const ap = scheduled(approved, {}, { placeId: undefined, supplierId: undefined });
+      const d = decide(ctx({ household: h, place: home, quote: fire, approvals: [ap], now: FIRE }));
+      expect(d.verdict).toBe('HOLD');
+      expect(rules(d)).toContain('approval_mismatch');
+      expect(d.reasons.at(-1)!.detail).toMatch(/names no place; names no supplier/);
+    });
+
+    it('same lines to another place → refused, even a trusted one', () => {
+      const there = makeQuote(trustedElsewhere, fire.lines, fire.fees);
+      const d = decide(
+        ctx({ household: hAll, place: trustedElsewhere, quote: there, approvals: [scheduled(approved)], now: FIRE }),
+      );
+      expect(d.verdict).toBe('HOLD');
+      expect(d.reasons.at(-1)!.detail).toContain(`is for place ${home.id}`);
+    });
+
+    it('approved for another supplier → refused', () => {
+      const ap = scheduled(approved, {}, { supplierId: 'zepto' });
+      const d = decide(ctx({ household: h, place: home, quote: fire, approvals: [ap], now: FIRE }));
+      expect(d.verdict).toBe('HOLD');
+      expect(d.reasons.at(-1)!.detail).toContain('is for zepto');
+    });
+
+    it("an adder's request is not covered unless the owner named them in forMembers", () => {
+      const notFor = decide(
+        ctx({
+          household: h,
+          place: home,
+          quote: fire,
+          approvals: [scheduled(approved)],
+          requestingMember: adderOf,
+          now: FIRE,
+        }),
+      );
+      expect(notFor.verdict).toBe('HOLD');
+      expect(rules(notFor)).toContain('role');
+      const forAdder = scheduled(approved, { forMembers: [adderOf.id] });
+      const d = decide(
+        ctx({ household: h, place: home, quote: fire, approvals: [forAdder], requestingMember: adderOf, now: FIRE }),
+      );
+      expect(d.verdict).toBe('PAY');
+      expect(d.approvalId).toBe(forAdder.id);
+    });
   });
 
   it('never lifts a BLOCK', () => {

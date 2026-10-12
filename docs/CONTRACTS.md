@@ -89,3 +89,7 @@ Auth for v1: a single bearer token in env. No UI.
 - Scheduled orders: an approval with `conditions.lineHash` binds to the sorted lines (`variantId:qty`), not the full quote hash. At fire time the engine accepts such an approval when the quote's line hash matches, every line is in stock, `total <= conditions.maxTotal`, and `now >= notBefore`. `core/hash.ts` exports `lineHash(lines)`. A hash-bound approval (no conditions) still requires the exact quote hash.
 - `quotes.hash` inserts use ON CONFLICT DO NOTHING.
 - Daily cap counts unattended (PAY-without-approval) orders only; monthly cap counts all placed orders.
+
+## Amendments (12 Oct, security review fixes)
+
+- **Line-bound approvals are scoped (review 2i).** `Approval.placeId?` and `Approval.supplierId?` added (columns `approvals.place_id`, `approvals.supplier_id`, migration `0002_approval_scope`), and `conditions.forMembers?: string[]`. The engine accepts a line-bound approval only when it names a place and a supplier equal to the quote's (and the live cart's), and the requesting member is the approving owner (`memberId`) or listed in `conditions.forMembers`. Otherwise the approval is out of scope (`approval_mismatch`, with the reason). Hash-bound approvals already bind place and supplier through the hash; `/approve` now stamps `placeId`/`supplierId` on them too and the engine checks them when present.

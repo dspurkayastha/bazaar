@@ -15,6 +15,13 @@
       "when": 1791786744403,
       "tag": "0001_approval_tracking",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791789107321,
+      "tag": "0002_approval_scope",
+      "breakpoints": true
     }
   ]
 }

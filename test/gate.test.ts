@@ -87,6 +87,8 @@ function approve(quote: Quote, by: Member = owner(h), extra: Partial<Approval> =
 function approveLines(quote: Quote, maxTotal: number, extra: Partial<NonNullable<Approval['conditions']>> = {}) {
   return approve(quote, owner(h), {
     expiresAt: '2026-10-19T14:00:00.000Z',
+    placeId: quote.placeId,
+    supplierId: quote.supplierId,
     conditions: { lineHash: lineHash(quote.lines), maxTotal, inStock: true, ...extra },
   });
 }

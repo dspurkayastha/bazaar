@@ -214,11 +214,26 @@ export interface Approval {
   /** Set when the approval has been used to place an order; single-use */
   consumedAt?: ISODateTime;
   /**
+   * The place and supplier the owner approved. REQUIRED for line-bound approvals (the engine refuses one without
+   * them, or whose place/supplier differ from the quote's); checked when present on hash-bound ones (the hash
+   * already covers both).
+   */
+  placeId?: string;
+  supplierId?: SupplierId;
+  /**
    * Scheduled orders: a conditional approval binds to the LINES (sorted variantId:qty) rather than the
    * full hash, and covers any fire-time quote with the same lines whose total <= maxTotal and whose
    * items are in stock. `lineHash` is sha256 of the sorted lines; see core/hash.ts.
+   * A line-bound approval covers requests by the approving owner (`memberId`) only, plus the members listed
+   * in `forMembers`.
    */
-  conditions?: { lineHash?: string; inStock?: boolean; maxTotal?: Paise; notBefore?: ISODateTime };
+  conditions?: {
+    lineHash?: string;
+    inStock?: boolean;
+    maxTotal?: Paise;
+    notBefore?: ISODateTime;
+    forMembers?: string[];
+  };
 }
 
 export interface PolicyContext {

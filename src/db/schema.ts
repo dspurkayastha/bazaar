@@ -159,6 +159,9 @@ export const approvals = pgTable(
       .references(() => members.id),
     createdAt: ts('created_at').notNull(),
     expiresAt: ts('expires_at').notNull(),
+    /** Place and supplier the owner approved; required for line-bound approvals (engine refuses without). */
+    placeId: text('place_id').references(() => places.id),
+    supplierId: text('supplier_id').$type<SupplierId>(),
     conditions: jsonb('conditions').$type<NonNullable<Approval['conditions']>>(),
     /** Set when the gate used this approval to pay; an approval pays at most once. */
     consumedAt: ts('consumed_at'),

@@ -43,6 +43,8 @@ export async function approveQuote(deps: ApiDeps, quoteHash: string, memberId: s
     id: newId('ap'),
     quoteHash,
     memberId,
+    placeId: quote.placeId,
+    supplierId: quote.supplierId,
     createdAt: now,
     expiresAt: new Date(Date.parse(now) + APPROVAL_TTL_MS).toISOString(),
   };

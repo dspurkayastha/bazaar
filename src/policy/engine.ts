@@ -41,6 +41,7 @@ interface Breach {
 type ApprovalStatus =
   | { kind: 'valid' }
   | { kind: 'other_hash' }
+  | { kind: 'out_of_scope'; detail: string }
   | { kind: 'not_owner' }
   | { kind: 'expired' }
   | { kind: 'consumed' }
@@ -78,8 +79,40 @@ function boundToThisQuote(ctx: PolicyContext, a: Approval): boolean {
   return a.quoteHash === ctx.quote.hash && a.quoteHash === ctx.liveCart.hash;
 }
 
+/**
+ * Where, from whom and for whom the owner approved. A line-bound approval MUST name its place and supplier, and
+ * covers only the approving owner's own requests plus `conditions.forMembers`: the same lines to another place, at
+ * another store, or asked for by someone else are not what the owner approved. Hash-bound approvals already bind
+ * place and supplier through the hash; their placeId/supplierId are checked when present.
+ */
+function scopeMismatch(ctx: PolicyContext, a: Approval): string | undefined {
+  const lineBound = isLineBound(a);
+  const problems: string[] = [];
+  if (a.placeId !== undefined || lineBound) {
+    if (a.placeId === undefined) problems.push('names no place');
+    else if (a.placeId !== ctx.quote.placeId || a.placeId !== ctx.place.id) {
+      problems.push(`is for place ${a.placeId}, not ${ctx.place.nickname}`);
+    }
+  }
+  if (a.supplierId !== undefined || lineBound) {
+    if (a.supplierId === undefined) problems.push('names no supplier');
+    else if (a.supplierId !== ctx.quote.supplierId || a.supplierId !== ctx.liveCart.supplierId) {
+      problems.push(`is for ${a.supplierId}, not ${ctx.quote.supplierId}`);
+    }
+  }
+  if (lineBound) {
+    const who = ctx.requestingMember.id;
+    if (who !== a.memberId && !(a.conditions?.forMembers ?? []).includes(who)) {
+      problems.push(`does not cover requests by ${ctx.requestingMember.name}`);
+    }
+  }
+  return problems.length > 0 ? problems.join('; ') : undefined;
+}
+
 function classifyApproval(ctx: PolicyContext, a: Approval, nowMs: number): ApprovalStatus {
   if (!boundToThisQuote(ctx, a)) return { kind: 'other_hash' };
+  const scope = scopeMismatch(ctx, a);
+  if (scope !== undefined) return { kind: 'out_of_scope', detail: scope };
   const member = ctx.household.members.find((m) => m.id === a.memberId);
   if (!member || member.role !== 'owner') return { kind: 'not_owner' };
   // Approvals are single-use. The gate filters consumed ones out; the engine refuses them too.
@@ -228,6 +261,7 @@ export function decide(ctx: PolicyContext): PolicyDecision {
       if (s.kind === 'expired') hold(RULES.approvalExpired, `approval ${a.id} expired at ${a.expiresAt}`);
       if (s.kind === 'consumed') hold(RULES.approvalConsumed, `approval ${a.id} was already used at ${a.consumedAt}`);
       if (s.kind === 'not_owner') hold(RULES.role, `approval ${a.id} is not from an owner`);
+      if (s.kind === 'out_of_scope') hold(RULES.approvalMismatch, `approval ${a.id} ${s.detail}`);
     }
   }
 

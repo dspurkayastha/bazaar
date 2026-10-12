@@ -148,6 +148,8 @@ export async function loadCandidateApprovals(db: Db, quote: Quote): Promise<Appr
     id: r.id,
     quoteHash: r.quoteHash,
     memberId: r.memberId,
+    ...(r.placeId ? { placeId: r.placeId } : {}),
+    ...(r.supplierId ? { supplierId: r.supplierId } : {}),
     createdAt: r.createdAt,
     expiresAt: r.expiresAt,
     ...(r.conditions ? { conditions: r.conditions } : {}),
