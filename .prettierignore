@@ -7,4 +7,7 @@ docs
 CLAUDE.md
 src/core/types.ts
 .claude/
-web/
+web/node_modules
+web/dist
+web/pnpm-lock.yaml
+web/public
