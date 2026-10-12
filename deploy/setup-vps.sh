@@ -6,10 +6,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== toolchain"
-command -v node >/dev/null || { echo "node missing"; exit 1; }
-node -e 'const v=+process.versions.node.split(".")[0]; if(v<22){console.error("need Node 22, have",process.version);process.exit(1)}'
+NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+if [ "$NODE_MAJOR" -lt 22 ]; then
+  echo "   upgrading Node $NODE_MAJOR -> 22 (NodeSource)"
+  curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh
+  bash /tmp/nodesource_setup.sh
+  apt-get install -y nodejs
+  npm i -g pm2 pnpm
+  pm2 update   # respawn the PM2 daemon and existing apps on the new runtime
+fi
 command -v pnpm >/dev/null || npm i -g pnpm
 command -v pm2 >/dev/null || npm i -g pm2
+node -v
 
 echo "== .env"
 if [ ! -f .env ]; then
