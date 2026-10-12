@@ -32,3 +32,21 @@ export function quoteHashInput(q: HashableQuote): string {
 export function quoteHash(q: HashableQuote): string {
   return createHash('sha256').update(quoteHashInput(q), 'utf8').digest('hex');
 }
+
+export type HashableLine = Pick<Quote['lines'][number], 'variantId' | 'quantity'>;
+
+/** Canonical line-set pre-image: lines sorted by variantId as "variantId:qty" joined ",". */
+export function lineHashInput(lines: readonly HashableLine[]): string {
+  return [...lines]
+    .sort((a, b) => byCodeUnit(a.variantId, b.variantId) || a.quantity - b.quantity)
+    .map((l) => `${l.variantId}:${l.quantity}`)
+    .join(',');
+}
+
+/**
+ * sha256 hex over the sorted lines only (no prices, fees, place or total). Scheduled approvals bind to this via
+ * `Approval.conditions.lineHash`, so a fire-time re-quote with the same lines can still be approved.
+ */
+export function lineHash(lines: readonly HashableLine[]): string {
+  return createHash('sha256').update(lineHashInput(lines), 'utf8').digest('hex');
+}

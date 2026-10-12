@@ -1,6 +1,22 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { quoteHash, quoteHashInput, type HashableQuote } from '../src/core/hash.js';
+import { lineHash, lineHashInput, quoteHash, quoteHashInput, type HashableQuote } from '../src/core/hash.js';
+
+describe('lineHash', () => {
+  const lines = [
+    { variantId: 'v-rice', quantity: 1, unitPrice: 18000 },
+    { variantId: 'v-chicken', quantity: 2, unitPrice: 26000 },
+  ];
+  it('covers sorted variantId:qty only', () => {
+    expect(lineHashInput(lines)).toBe('v-chicken:2,v-rice:1');
+    expect(lineHash(lines)).toBe(createHash('sha256').update('v-chicken:2,v-rice:1').digest('hex'));
+  });
+  it('ignores order and prices, but not quantities', () => {
+    expect(lineHash([...lines].reverse())).toBe(lineHash(lines));
+    expect(lineHash(lines.map((l) => ({ ...l, unitPrice: l.unitPrice + 500 })))).toBe(lineHash(lines));
+    expect(lineHash([{ ...lines[0]!, quantity: 2 }, lines[1]!])).not.toBe(lineHash(lines));
+  });
+});
 
 const base: HashableQuote = {
   supplierId: 'instamart',
