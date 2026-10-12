@@ -1,7 +1,8 @@
 /**
  * Boots the API.
  *
- *   BAZAAR_API_TOKEN   required; bearer token for every route but /health
+ *   BAZAAR_API_TOKEN   required; household READ token, /ledger/summary only (members use their own mtk_ tokens)
+ *   WHATSAPP_WEBHOOK_SECRET  HMAC key the WhatsApp relay signs bodies with (x-bazaar-signature); unset = webhook off
  *   ANTHROPIC_API_KEY  required for /request (the agent loop); ANTHROPIC_MODEL optional
  *   DATABASE_URL       Postgres (needs BAZAAR_HOUSEHOLD_ID); unset = in-memory store seeded with the founding household
  *   BAZAAR_SUPPLIERS   comma list of supplier ids, default "stub"; e.g. "instamart" (needs TOKEN_ENC_KEY + pnpm auth:instamart)
@@ -11,6 +12,7 @@ import 'dotenv/config';
 import { MemoryStore } from './agent/memory-store.js';
 import type { Store } from './agent/store.js';
 import { anthropicClient } from './agent/llm.js';
+import { issueMemberToken } from './api/auth.js';
 import { buildServer } from './api/server.js';
 import type { Supplier } from './core/types.js';
 import { createDb } from './db/client.js';
@@ -39,15 +41,30 @@ async function main(): Promise<void> {
   } else {
     const household = foundingHousehold();
     defaultHouseholdId = household.id;
-    store = new MemoryStore([household]);
+    const memory = new MemoryStore([household]);
+    store = memory;
     console.warn(
       `DATABASE_URL not set: using an in-memory store (household ${household.id}); state is lost on restart.`,
     );
-    console.warn(`Owner member id: ${household.members.find((m) => m.role === 'owner')!.id}`);
+    // Fresh member tokens every boot (nothing persists); printed once, only hashes are kept.
+    console.warn('Member API tokens for this run (Authorization: Bearer ...):');
+    for (const m of household.members) {
+      console.warn(`  ${m.name} (${m.role}, ${m.id}): ${await issueMemberToken(memory, m.id)}`);
+    }
   }
 
+  const webhookSecret = process.env.WHATSAPP_WEBHOOK_SECRET ?? '';
+  if (!webhookSecret) console.warn('WHATSAPP_WEBHOOK_SECRET not set: /webhooks/whatsapp will refuse every request.');
+
   const app = buildServer(
-    { store, suppliers: await loadSuppliers(), llm: anthropicClient(), apiToken, defaultHouseholdId },
+    {
+      store,
+      suppliers: await loadSuppliers(),
+      llm: anthropicClient(),
+      apiToken,
+      ...(webhookSecret ? { webhookSecret } : {}),
+      defaultHouseholdId,
+    },
     { logger: true },
   );
   const port = Number(process.env.PORT ?? 8787);

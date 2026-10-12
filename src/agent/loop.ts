@@ -19,6 +19,7 @@ import type {
   Member,
   PaymentMethod,
   Place,
+  PolicyContext,
   Quote,
   ShopRequest,
   ShopResult,
@@ -173,7 +174,17 @@ function listRemoved(removed: { name: string; quantity: number }[]): string {
   return removed.map((r) => `${r.quantity} x ${r.name}`).join(', ');
 }
 
-export async function runShopRequestDetailed(request: ShopRequest, deps: AgentDeps): Promise<ShopOutcome> {
+/** How the request reached us. Absent = the member authenticated with their own token. */
+export interface RunOptions {
+  /** A signed channel webhook (WhatsApp): see PolicyContext.webhook. */
+  webhook?: NonNullable<PolicyContext['webhook']>;
+}
+
+export async function runShopRequestDetailed(
+  request: ShopRequest,
+  deps: AgentDeps,
+  opts: RunOptions = {},
+): Promise<ShopOutcome> {
   const now = deps.now ?? (() => new Date().toISOString());
   const log = deps.log ?? (() => undefined);
   const sanitiseLog = deps.sanitiseLog ?? new SanitiseLog();
@@ -272,6 +283,7 @@ export async function runShopRequestDetailed(request: ShopRequest, deps: AgentDe
     payment,
     sanitiseLog,
     state,
+    ...(opts.webhook ? { webhook: opts.webhook } : {}),
   };
 
   // 4. The tool-use loop.
@@ -441,8 +453,12 @@ export async function runShopRequestDetailed(request: ShopRequest, deps: AgentDe
   return finish(result, toolCalls);
 }
 
-export async function runShopRequest(request: ShopRequest, deps: AgentDeps): Promise<ShopResult> {
-  return (await runShopRequestDetailed(request, deps)).result;
+export async function runShopRequest(
+  request: ShopRequest,
+  deps: AgentDeps,
+  opts: RunOptions = {},
+): Promise<ShopResult> {
+  return (await runShopRequestDetailed(request, deps, opts)).result;
 }
 
 /** Convenience for callers that build a request from raw text. */

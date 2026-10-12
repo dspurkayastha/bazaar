@@ -2,7 +2,7 @@
  * Postgres-backed Store. Composes the ledger helpers in ./ledger.ts; no business logic here.
  * Not exercised by unit tests (no DB in tests); MemoryStore is the reference implementation.
  */
-import { and, eq, gte, isNotNull, notInArray, sql } from 'drizzle-orm';
+import { and, eq, gte, isNotNull, isNull, notInArray, sql } from 'drizzle-orm';
 import type { Store } from '../agent/store.js';
 import { BazaarError } from '../core/errors.js';
 import type {
@@ -22,6 +22,7 @@ import type {
 import type { SpendRow } from '../policy/spend.js';
 import type { Db } from './client.js';
 import { conn, PgGateLock, type Tx } from './lock.js';
+import { rotateMemberCredential } from './credentials.js';
 import { DbDecisionRecorder, insertQuote, loadCandidateApprovals, loadSpendRows } from './ledger.js';
 import {
   approvals,
@@ -29,6 +30,7 @@ import {
   itemDefaults,
   ledgerLines,
   ledgerOrders,
+  memberCredentials,
   members,
   places,
   profiles,
@@ -124,6 +126,20 @@ export class DbStore implements Store {
       .where(sql`${members.channels} @> ${needle}::jsonb`)
       .limit(1);
     return m ? { householdId: m.householdId, memberId: m.id } : undefined;
+  }
+
+  async findMemberByTokenHash(tokenHash: string) {
+    const [m] = await this.db
+      .select({ memberId: members.id, householdId: members.householdId })
+      .from(memberCredentials)
+      .innerJoin(members, eq(memberCredentials.memberId, members.id))
+      .where(and(eq(memberCredentials.tokenHash, tokenHash), isNull(memberCredentials.revokedAt)))
+      .limit(1);
+    return m;
+  }
+
+  async rotateMemberCredential(memberId: string, tokenHash: string): Promise<void> {
+    await rotateMemberCredential(this.db, memberId, tokenHash);
   }
 
   async savePlace(p: Place): Promise<void> {

@@ -17,6 +17,9 @@ describe('founding household seed data', () => {
       ['Partner', 'adder'],
     ]);
     expect(h.members[0]!.channels[0]!.kind).toBe('whatsapp');
+    // Only Dev's own WhatsApp is trusted to pay via the webhook; the adder's never is.
+    expect(h.members[0]!.channels[0]!.trusted).toBe(true);
+    expect(h.members[1]!.channels.some((c) => c.trusted)).toBe(false);
   });
 
   it('has exactly the four Instamart places from the sample ids', () => {

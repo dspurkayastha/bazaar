@@ -1,5 +1,6 @@
 /**
- * POST /approve { quoteHash, memberId }: an owner approves exactly one quote hash. We store an Approval
+ * POST /approve { quoteHash } with the owner's own bearer token: an owner approves exactly one quote hash. The
+ * approving member is the token's member; a `memberId` in the body is ignored. We store an Approval
  * (30 min, single use), then re-run the gate for that quote; the gate places only if it now says PAY.
  * The decision (PAY / HOLD / BLOCK) is returned as data; 4xx is only for bad input and non-owners.
  */
@@ -10,6 +11,7 @@ import { newId } from '../../core/ids.js';
 import type { Approval, PlacedOrder, PolicyDecision } from '../../core/types.js';
 import { loadingContextBuilder } from '../../policy/context.js';
 import { needsRequote, placeWithGate } from '../../policy/gate.js';
+import { memberOf, type AuthedMember } from '../auth.js';
 import { ApiError, body, reqString, type ApiDeps } from '../http.js';
 
 export const APPROVAL_TTL_MS = 30 * 60_000;
@@ -26,10 +28,12 @@ export interface ApproveOutcome {
   gateLine: string;
 }
 
-export async function approveQuote(deps: ApiDeps, quoteHash: string, memberId: string): Promise<ApproveOutcome> {
+export async function approveQuote(deps: ApiDeps, quoteHash: string, who: AuthedMember): Promise<ApproveOutcome> {
   const stored = await deps.store.getQuote(quoteHash);
-  if (!stored) throw new ApiError(404, 'no quote with that hash');
+  // Another household's quote is indistinguishable from no quote.
+  if (!stored || stored.householdId !== who.householdId) throw new ApiError(404, 'no quote with that hash');
   const { quote } = stored;
+  const memberId = who.memberId;
   const household = await deps.store.loadHousehold(stored.householdId);
   const member = household.members.find((m) => m.id === memberId);
   if (!member) throw new ApiError(404, 'unknown member');
@@ -86,8 +90,8 @@ export async function approveQuote(deps: ApiDeps, quoteHash: string, memberId: s
 }
 
 export function registerApproveRoutes(app: FastifyInstance, deps: ApiDeps): void {
-  app.post('/approve', async (req) => {
+  app.post('/approve', { config: { auth: 'member' } }, async (req) => {
     const o = body(req.body);
-    return approveQuote(deps, reqString(o, 'quoteHash', 128), reqString(o, 'memberId', 128));
+    return approveQuote(deps, reqString(o, 'quoteHash', 128), memberOf(req));
   });
 }

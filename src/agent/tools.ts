@@ -19,6 +19,7 @@ import type {
   PaymentMethod,
   Place,
   PlacedOrder,
+  PolicyContext,
   PolicyDecision,
   Quote,
   ShopRequest,
@@ -81,6 +82,8 @@ export interface ToolEnv {
   payment: PaymentMethod;
   sanitiseLog: SanitiseLog;
   state: RunState;
+  /** Set for webhook-originated requests: no approvals, HOLD unless the channel is trusted (PolicyContext.webhook). */
+  webhook?: PolicyContext['webhook'];
 }
 
 type Json = Record<string, unknown>;
@@ -426,6 +429,7 @@ export async function proposeCheckoutFor(env: ToolEnv, supplierId?: string, quot
           quote,
           requestingMember: env.member,
           now,
+          ...(env.webhook ? { webhook: env.webhook, approvals: false } : {}),
         }),
       });
       state.decision = res.decision;

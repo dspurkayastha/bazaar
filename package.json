@@ -19,6 +19,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
+    "member:token": "tsx scripts/member-token.ts",
     "auth:instamart": "tsx scripts/auth-instamart.ts"
   },
   "dependencies": {

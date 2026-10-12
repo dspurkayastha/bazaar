@@ -156,7 +156,8 @@ export function foundingHousehold(id: (prefix: string) => string = newId): House
         householdId,
         name: 'Dev',
         role: 'owner',
-        channels: [{ kind: 'whatsapp', address: '+910000000001' }], // placeholder
+        // placeholder number; trusted: Dev's own WhatsApp may pay within the unattended limits via the webhook
+        channels: [{ kind: 'whatsapp', address: '+910000000001', trusted: true }],
       },
       {
         id: id('mem'),

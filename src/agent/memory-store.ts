@@ -31,6 +31,8 @@ export class MemoryStore implements Store {
   readonly placed: PlacedRecord[] = [];
   readonly orders: (LedgerOrderInput & { householdId: string })[] = [];
   private readonly spend: (SpendRow & { householdId: string })[] = [];
+  /** sha256(member token) → member; only hashes are kept, as in the member_credentials table. */
+  readonly credentials = new Map<string, { householdId: string; memberId: string; revokedAt?: ISODateTime }>();
 
   constructor(households: Household[] = []) {
     for (const h of households) this.households.set(h.id, structuredClone(h));
@@ -115,6 +117,23 @@ export class MemoryStore implements Store {
       if (m) return { householdId: h.id, memberId: m.id };
     }
     return undefined;
+  }
+
+  async findMemberByTokenHash(tokenHash: string) {
+    const c = this.credentials.get(tokenHash);
+    if (!c || c.revokedAt !== undefined) return undefined;
+    const h = this.households.get(c.householdId);
+    if (!h?.members.some((m) => m.id === c.memberId)) return undefined;
+    return { householdId: c.householdId, memberId: c.memberId };
+  }
+
+  async rotateMemberCredential(memberId: string, tokenHash: string): Promise<void> {
+    const h = [...this.households.values()].find((x) => x.members.some((m) => m.id === memberId));
+    if (!h) throw new BazaarError('UNKNOWN_MEMBER', `member ${memberId} not found`);
+    const now = new Date().toISOString();
+    for (const c of this.credentials.values())
+      if (c.memberId === memberId && c.revokedAt === undefined) c.revokedAt = now;
+    this.credentials.set(tokenHash, { householdId: h.id, memberId });
   }
 
   async savePlace(place: Place): Promise<void> {

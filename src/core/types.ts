@@ -16,8 +16,8 @@ export interface Member {
   householdId: string;
   name: string;
   role: MemberRole;
-  /** e.g. WhatsApp number in E.164, Siri device id */
-  channels: { kind: 'whatsapp' | 'siri' | 'web'; address: string }[];
+  /** e.g. WhatsApp number in E.164, Siri device id. `trusted` (owner channels only): see PolicyContext.webhook */
+  channels: { kind: 'whatsapp' | 'siri' | 'web'; address: string; trusted?: boolean }[];
   /** For dependants: the place their orders go to by default */
   defaultPlaceId?: string;
 }
@@ -249,6 +249,12 @@ export interface PolicyContext {
   /** itemKey → max quantity bought in one order in the last 90 days */
   quantityHistory: Record<string, number>;
   now: ISODateTime;
+  /**
+   * Set when the request arrived through a signed channel webhook (WhatsApp) rather than a member's own bearer
+   * token. Approvals never apply to such a request, and it is HELD (channel_untrusted) unless `trusted`
+   * (an owner's channel marked `trusted` in Member.channels).
+   */
+  webhook?: { channel: 'whatsapp' | 'siri' | 'web'; trusted: boolean };
 }
 
 export type PolicyVerdict = 'PAY' | 'HOLD' | 'BLOCK';

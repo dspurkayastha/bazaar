@@ -30,6 +30,14 @@ export interface Store {
     address: string,
   ): Promise<{ householdId: string; memberId: string } | undefined>;
 
+  /**
+   * Resolve a member credential (sha256 hex of the member's bearer token) to its member. Revoked credentials and
+   * unknown hashes resolve to undefined.
+   */
+  findMemberByTokenHash(tokenHash: string): Promise<{ householdId: string; memberId: string } | undefined>;
+  /** Install a new credential hash for the member and revoke every previous one (issue = rotate). */
+  rotateMemberCredential(memberId: string, tokenHash: string): Promise<void>;
+
   /** Insert or replace a place (all fields). */
   savePlace(place: Place): Promise<void>;
   saveServiceability(placeId: string, records: Serviceability[]): Promise<void>;

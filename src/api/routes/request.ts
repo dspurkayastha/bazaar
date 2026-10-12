@@ -1,12 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { makeRequest, runShopRequest } from '../../agent/loop.js';
 import type { ShopRequest } from '../../core/types.js';
+import { memberOf, type AuthedMember } from '../auth.js';
 import { ApiError, body, optString, reqString, type ApiDeps } from '../http.js';
 
 const CHANNELS = ['siri', 'whatsapp', 'web'] as const;
 
-/** Body → ShopRequest. `id`, `receivedAt`, `householdId` and `channel` are filled in when absent. */
-export function parseShopRequest(raw: unknown, deps: ApiDeps): ShopRequest {
+/**
+ * Body → ShopRequest. The member and household come from the caller's credential (`who`), never from the body:
+ * any `memberId` / `householdId` in the body is ignored. `id`, `receivedAt` and `channel` are filled in when absent.
+ */
+export function parseShopRequest(raw: unknown, deps: ApiDeps, who: AuthedMember): ShopRequest {
   const o = body(raw);
   const channel = optString(o, 'channel') ?? 'web';
   if (!(CHANNELS as readonly string[]).includes(channel))
@@ -32,8 +36,8 @@ export function parseShopRequest(raw: unknown, deps: ApiDeps): ShopRequest {
   const now = deps.now?.() ?? new Date().toISOString();
   return makeRequest(
     {
-      householdId: optString(o, 'householdId') ?? deps.defaultHouseholdId,
-      memberId: reqString(o, 'memberId'),
+      householdId: who.householdId,
+      memberId: who.memberId,
       text: reqString(o, 'text', 2000),
       channel: channel as ShopRequest['channel'],
       ...(optString(o, 'id') ? { id: optString(o, 'id')! } : {}),
@@ -45,5 +49,7 @@ export function parseShopRequest(raw: unknown, deps: ApiDeps): ShopRequest {
 }
 
 export function registerRequestRoutes(app: FastifyInstance, deps: ApiDeps): void {
-  app.post('/request', async (req) => runShopRequest(parseShopRequest(req.body, deps), deps));
+  app.post('/request', { config: { auth: 'member' } }, async (req) =>
+    runShopRequest(parseShopRequest(req.body, deps, memberOf(req)), deps),
+  );
 }

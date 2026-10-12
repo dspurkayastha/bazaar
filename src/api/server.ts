@@ -1,10 +1,12 @@
 /**
- * The v1 HTTP API (Fastify). One bearer token from BAZAAR_API_TOKEN guards everything except GET /health.
+ * The v1 HTTP API (Fastify). Authentication is per route (src/api/auth.ts): members use their own `mtk_...` token on
+ * /request, /approve and /places; BAZAAR_API_TOKEN is only the household read token for /ledger/summary; the
+ * WhatsApp webhook is authenticated by an HMAC signature over the raw body; /health is open.
  * Routes live in ./routes; this file wires auth, error mapping and registration.
  */
-import { createHash, timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { BazaarError, SupplierError } from '../core/errors.js';
+import { authHook } from './auth.js';
 import { ApiError, type ApiDeps } from './http.js';
 import { registerApproveRoutes } from './routes/approve.js';
 import { registerLedgerRoutes } from './routes/ledger.js';
@@ -14,22 +16,12 @@ import { registerWebhookRoutes } from './routes/webhooks.js';
 
 export type { ApiDeps } from './http.js';
 
-const digest = (s: string) => createHash('sha256').update(s).digest();
-
 export function buildServer(deps: ApiDeps, opts: { logger?: boolean } = {}): FastifyInstance {
   if (!deps.apiToken) throw new Error('BAZAAR_API_TOKEN is not set; refusing to start an unauthenticated API');
-  const expected = digest(deps.apiToken);
 
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 64 * 1024 });
-
-  app.addHook('onRequest', async (req, reply) => {
-    if (req.url === '/health') return;
-    const header = req.headers.authorization ?? '';
-    const m = /^Bearer (.+)$/.exec(header);
-    if (!m || !timingSafeEqual(digest(m[1]!), expected)) {
-      return reply.code(401).header('www-authenticate', 'Bearer').send({ error: 'unauthorised' });
-    }
-  });
+  app.decorateRequest('member', undefined);
+  app.addHook('onRequest', authHook(deps.store, deps.apiToken));
 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof ApiError) return reply.code(err.status).send({ error: err.message });
@@ -49,7 +41,7 @@ export function buildServer(deps: ApiDeps, opts: { logger?: boolean } = {}): Fas
     return reply.code(500).send({ error: 'internal error' });
   });
 
-  app.get('/health', async () => ({ ok: true }));
+  app.get('/health', { config: { auth: 'none' } }, async () => ({ ok: true }));
   registerRequestRoutes(app, deps);
   registerApproveRoutes(app, deps);
   registerPlaceRoutes(app, deps);

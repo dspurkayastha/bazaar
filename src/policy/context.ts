@@ -19,6 +19,8 @@ export interface PolicyInputs {
   quantityHistory: Record<string, number>;
   now: ISODateTime;
   tz?: string;
+  /** Webhook-originated request: see PolicyContext.webhook. */
+  webhook?: PolicyContext['webhook'];
 }
 
 export function unconsumed(approvals: readonly Approval[]): Approval[] {
@@ -38,6 +40,7 @@ export function buildPolicyContext(inputs: PolicyInputs, liveCart: Quote): Polic
     spendThisMonth,
     quantityHistory: inputs.quantityHistory,
     now: inputs.now,
+    ...(inputs.webhook ? { webhook: inputs.webhook } : {}),
   };
 }
 

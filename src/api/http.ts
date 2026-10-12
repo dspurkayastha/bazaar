@@ -11,8 +11,10 @@ export class ApiError extends Error {
 }
 
 export interface ApiDeps extends AgentDeps {
-  /** Bearer token required on every route except /health. */
+  /** Household-level read token (BAZAAR_API_TOKEN): /ledger/summary only. Members use their own tokens. */
   apiToken: string;
+  /** WHATSAPP_WEBHOOK_SECRET: HMAC-SHA256 key for x-bazaar-signature. Unset → the webhook refuses everything (503). */
+  webhookSecret?: string;
   /** Household used when a request does not name one (v1 is a single household). */
   defaultHouseholdId: string;
 }

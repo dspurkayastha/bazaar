@@ -1,8 +1,13 @@
-/** pnpm db:seed — inserts the founding household once (skips if a household with that name exists). */
+/**
+ * pnpm db:seed — inserts the founding household once (skips if a household with that name exists), with one API
+ * token per member. The plaintext tokens are printed ONCE here; only their sha256 is stored. Lost or leaked tokens
+ * are replaced with `pnpm member:token <memberId>`.
+ */
 import { eq } from 'drizzle-orm';
+import { hashMemberToken, newMemberToken } from '../core/credentials.js';
 import { newId } from '../core/ids.js';
 import { createDb } from './client.js';
-import { households, itemDefaults, members, places, profiles } from './schema.js';
+import { households, itemDefaults, memberCredentials, members, places, profiles } from './schema.js';
 import { foundingHousehold } from './seed-data.js';
 
 const h = foundingHousehold();
@@ -13,9 +18,17 @@ try {
   if (existing.length > 0) {
     console.log(`household "${h.name}" already seeded (${existing[0]!.id}); nothing to do`);
   } else {
+    const tokens = h.members.map((m) => ({ member: m, token: newMemberToken() }));
     await db.transaction(async (tx) => {
       await tx.insert(households).values({ id: h.id, name: h.name, policy: h.policy });
       await tx.insert(members).values(h.members.map((m) => ({ ...m, defaultPlaceId: m.defaultPlaceId ?? null })));
+      await tx.insert(memberCredentials).values(
+        tokens.map(({ member, token }) => ({
+          id: newId('mc'),
+          memberId: member.id,
+          tokenHash: hashMemberToken(token),
+        })),
+      );
       await tx.insert(places).values(
         h.places.map((p) => ({
           ...p,
@@ -44,6 +57,8 @@ try {
       );
     });
     console.log(`seeded household "${h.name}" (${h.id}): ${h.members.length} members, ${h.places.length} places`);
+    console.log('\nMember API tokens (Authorization: Bearer ...). Shown once; only hashes are stored:');
+    for (const { member, token } of tokens) console.log(`  ${member.name} (${member.role}, ${member.id}): ${token}`);
   }
 } finally {
   await close();

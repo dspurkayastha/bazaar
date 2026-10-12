@@ -3,22 +3,14 @@
  *
  * POST takes the supplier-side address ids the client got from the supplier's saved addresses (the Supplier
  * interface has no address listing). Making a place `trusted` lifts the unattended-pay limit for it, so setting
- * `trusted: true` (POST or PATCH) requires `memberId` of an owner. New places are untrusted by default.
+ * `trusted: true` (POST or PATCH) requires the caller's own token to be an owner's. New places are untrusted by
+ * default. All three act on the caller's household (from the token); body `memberId` / `householdId` are ignored.
  */
 import type { FastifyInstance } from 'fastify';
 import { newId } from '../../core/ids.js';
 import type { Household, Place, SupplierId } from '../../core/types.js';
-import {
-  ApiError,
-  body,
-  householdIdOf,
-  optBool,
-  optNumber,
-  optString,
-  optStringArray,
-  reqString,
-  type ApiDeps,
-} from '../http.js';
+import { memberOf, type AuthedMember } from '../auth.js';
+import { ApiError, body, optBool, optNumber, optString, optStringArray, reqString, type ApiDeps } from '../http.js';
 
 const SUPPLIER_IDS: SupplierId[] = ['instamart', 'swiggy_food', 'zomato', 'blinkit', 'zepto', 'kirana'];
 
@@ -34,9 +26,9 @@ function parseAddressIds(raw: unknown): Place['supplierAddressIds'] {
   return out;
 }
 
-async function requireOwner(deps: ApiDeps, household: Household, memberId: string | undefined): Promise<void> {
-  const m = household.members.find((x) => x.id === memberId);
-  if (!m || m.role !== 'owner') throw new ApiError(403, 'trusting a place requires memberId of an owner');
+function requireOwner(household: Household, who: AuthedMember): void {
+  const m = household.members.find((x) => x.id === who.memberId);
+  if (!m || m.role !== 'owner') throw new ApiError(403, "trusting a place requires an owner's token");
 }
 
 function assertNicknameFree(household: Household, nickname: string, exceptId?: string): void {
@@ -47,18 +39,19 @@ function assertNicknameFree(household: Household, nickname: string, exceptId?: s
 }
 
 export function registerPlaceRoutes(app: FastifyInstance, deps: ApiDeps): void {
-  app.get('/places', async (req) => {
-    const household = await deps.store.loadHousehold(householdIdOf(deps, req.query));
+  app.get('/places', { config: { auth: 'member' } }, async (req) => {
+    const household = await deps.store.loadHousehold(memberOf(req).householdId);
     return { places: household.places };
   });
 
-  app.post('/places', async (req, reply) => {
+  app.post('/places', { config: { auth: 'member' } }, async (req, reply) => {
     const o = body(req.body);
-    const household = await deps.store.loadHousehold(optString(o, 'householdId') ?? deps.defaultHouseholdId);
+    const who = memberOf(req);
+    const household = await deps.store.loadHousehold(who.householdId);
     const nickname = reqString(o, 'nickname', 60);
     assertNicknameFree(household, nickname);
     const trusted = optBool(o, 'trusted') ?? false;
-    if (trusted) await requireOwner(deps, household, optString(o, 'memberId'));
+    if (trusted) requireOwner(household, who);
     const lat = optNumber(o, 'lat');
     const lng = optNumber(o, 'lng');
     const place: Place = {
@@ -79,9 +72,10 @@ export function registerPlaceRoutes(app: FastifyInstance, deps: ApiDeps): void {
     return reply.code(201).send({ place });
   });
 
-  app.patch<{ Params: { id: string } }>('/places/:id', async (req) => {
+  app.patch<{ Params: { id: string } }>('/places/:id', { config: { auth: 'member' } }, async (req) => {
     const o = body(req.body);
-    const household = await deps.store.loadHousehold(optString(o, 'householdId') ?? deps.defaultHouseholdId);
+    const who = memberOf(req);
+    const household = await deps.store.loadHousehold(who.householdId);
     const existing = household.places.find((p) => p.id === req.params.id);
     if (!existing) throw new ApiError(404, 'no such place');
     const next: Place = { ...existing };
@@ -95,7 +89,7 @@ export function registerPlaceRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const trusted = optBool(o, 'trusted');
     if (trusted !== undefined && trusted !== existing.trusted) {
       // Only raising trust needs an owner; revoking it is always allowed.
-      if (trusted) await requireOwner(deps, household, optString(o, 'memberId'));
+      if (trusted) requireOwner(household, who);
       next.trusted = trusted;
     }
     const isDefault = optBool(o, 'isDefault');

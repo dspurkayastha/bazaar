@@ -62,6 +62,24 @@ export const members = pgTable(
   (t) => [index('members_household_idx').on(t.householdId)],
 );
 
+/**
+ * Per-member API credentials. Only sha256(token) is stored (hex); the `mtk_...` plaintext is shown once at issue.
+ * Issuing a new credential revokes the member's previous ones (rotation); revoked rows are kept for audit.
+ */
+export const memberCredentials = pgTable(
+  'member_credentials',
+  {
+    id: text('id').primaryKey(),
+    memberId: text('member_id')
+      .notNull()
+      .references(() => members.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: createdAt(),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [index('member_credentials_member_idx').on(t.memberId)],
+);
+
 export const places = pgTable(
   'places',
   {

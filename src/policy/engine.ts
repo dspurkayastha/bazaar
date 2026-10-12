@@ -27,6 +27,7 @@ export const RULES = {
   approvalExpired: 'approval_expired',
   approvalConsumed: 'approval_consumed',
   scheduledConditions: 'scheduled_conditions',
+  channelUntrusted: 'channel_untrusted',
 } as const;
 
 export type RuleName = (typeof RULES)[keyof typeof RULES];
@@ -238,8 +239,13 @@ export function decide(ctx: PolicyContext): PolicyDecision {
     hold(RULES.placeUntrusted, `${place.nickname} is not trusted for unattended pay`);
   }
 
-  // --- Approvals ---
-  const statuses = ctx.approvals.map((a) => ({ a, s: classifyApproval(ctx, a, nowMs) }));
+  // --- Channel: a webhook-originated request (relay-signed, not member-authenticated) ---
+  if (ctx.webhook && !ctx.webhook.trusted) {
+    hold(RULES.channelUntrusted, `request came in by ${ctx.webhook.channel}, which is not trusted to pay`);
+  }
+
+  // --- Approvals (never for webhook-originated requests: approving needs the owner's own credential) ---
+  const statuses = (ctx.webhook ? [] : ctx.approvals).map((a) => ({ a, s: classifyApproval(ctx, a, nowMs) }));
   // An owner's conditions on an approval bound to this quote are binding: if they fail, hold, never substitute.
   for (const { a, s } of statuses) {
     if (s.kind === 'conditions_failed') hold(RULES.scheduledConditions, `approval ${a.id}: ${s.detail}`);
