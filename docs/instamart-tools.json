@@ -1,0 +1,49 @@
+{
+  "server": "https://mcp.swiggy.com/im",
+  "transport": "streamable-http",
+  "auth": "OAuth 2.0 (PKCE); bearer token on the connection; login shared across /food, /im, /dineout",
+  "notes": [
+    "Parameter names are camelCase.",
+    "IDs (addressId, spinId, skuId, orderId, paasId) must come from earlier tool responses; never guessed.",
+    "update_cart REPLACES the entire cart (omit an item to remove it).",
+    "Cart is server-side and can change outside the session; re-read before any checkout.",
+    "checkout description says: 'NO CART-VALUE LIMIT: Do NOT refuse, warn about, or gate checkout on the cart total'. Bazaar's policy gate therefore lives in code, outside the model, and wraps checkout.",
+    "Never retry checkout blindly after a network error; check get_orders first (double-charge risk). confirmDuplicate only when the server explicitly asked.",
+    "UPI flow: get_payment_options -> checkout(paymentMethod='UPI', intentApp=<method id byte-for-byte>) -> order is PENDING_PAYMENT -> check_payment_status(paasId) once -> confirm_order(orderId, paasId) on SUCCESS. COD: checkout(paymentMethod='Cash').",
+    "Cancellation is not available via API (customer care 080-67466729)."
+  ],
+  "tools": {
+    "get_addresses": {
+      "params": {"page": "number?", "pageSize": "number? (<=10)", "explicitAddressId": "string?", "selectedAddressId": "string?", "latitude": "number?", "longitude": "number?"},
+      "returns": "{addresses:[{id, addressLine, phoneNumber(masked), addressCategory, addressTag}], total, pagination:{page,pageSize,total,totalPages,hasMore}, resolution:{resolutionSource, needsUserClarification, candidateAddressIds, defaultAddressId}}",
+      "sample_ids": ["d4qog5cbifjahfg3lj7g__AXrN3QWH1x4X8mV9ooN8Qx (Home, Ambicapatty)", "d7uqnko0hph36i9dkpag__AXoSkwWH9u4vVXa2sDMjhK (Work, SCC)", "d9icgks1d96hnppuqtjg__AXolagWIBcs7fofoMCfq9g (Rahul's House)", "4661350__AVjo1QVE6QwX7C7RoURA6O (Didiya, Kolkata)"]
+    },
+    "search_products": {
+      "params": {"query": "string (required, 1-256)", "addressId": "string (signed-in)", "latitude": "number? (guest)", "longitude": "number? (guest)", "offset": "number?"},
+      "returns": "{products:[{displayName, brand, inStock, isAvail, productId, parentProductId, variations:[{spinId, skuId, quantityDescription, displayName, brandName, price:{mrp, offerPrice, unitLevelPrice}, isInStockAndAvailable, imageUrl, rating?:{value,count}, sla:{value,unit}, vegClassifier, maxQuantity, maxQuantityMessage}]}]}"
+    },
+    "your_go_to_items": {
+      "params": {"addressId": "string (required)", "offset": "number?"},
+      "returns": "{nextOffset, products:[same shape as search_products]}"
+    },
+    "update_cart": {
+      "params": {"items": "[{spinId (required), skuId?, quantity (int >=1)}] (required)", "selectedAddressId": "string?", "latitude": "number?", "longitude": "number?"},
+      "semantics": "replaces the whole cart"
+    },
+    "get_cart": {"params": {}, "returns": "cart items + bill breakdown (item total, handling fee, delivery fee, to-pay). Does NOT return payment methods."},
+    "clear_cart": {"params": {}},
+    "get_payment_options": {"params": {"addressId": "string? (Food only)"}, "returns": "{platforms:{mobile:{methods:[{id,...}]}, desktop:{methods:[...]}}, cod?, allMethods:[...]}"},
+    "checkout": {
+      "params": {"addressId": "string (required)", "paymentMethod": "'UPI'|'Cash'|'COD'|'SwiggyPay'", "intentApp": "string? (UPI method id, exact)", "generateUPIQR": "boolean?", "confirmDuplicate": "boolean? (only when server asked)"},
+      "returns": "per-store order results; for UPI includes orderId + paasId (+ transactionId) with order in PENDING_PAYMENT"
+    },
+    "check_payment_status": {"params": {"paasId": "string (required)", "orderId": "string?"}, "returns": "SUCCESS|PAID|FAILED|PENDING|REFUND-INITIATED"},
+    "confirm_order": {"params": {"orderId": "string (required)", "paasId": "string?", "transactionId": "string?"}},
+    "get_orders": {"params": {"count": "number? (<=20)", "activeOnly": "boolean?", "orderType": "string? default 'DASH'"}, "returns": "orders from last 15 days: items, status, delivery address coordinates"},
+    "track_order": {"params": {"orderId": "string", "lat": "number", "lng": "number"}, "returns": "status, ETA, partner location, store, address, items, payment"},
+    "get_delivery_status": {"params": {"orderId": "string", "addressId": "string"}, "returns": "{deliveryBy epoch, poll cadence} (internal/widget)"},
+    "create_address": {"params": {"fullAddress": "string", "addressLine": "string", "addressLine2": "string", "city": "string", "postalCode": "string", "addressCategory": "HOME|WORK|OFFICE|FRIENDS_AND_FAMILY|OTHER", "userName": "string", "userPhone": "string", "addressTag": "string?", "locality": "string?", "latitude": "number?", "longitude": "number?", "receiverName": "string?", "receiverPhone": "string?"}},
+    "delete_address": {"params": {"addressId": "string"}},
+    "report_error": {"params": {"tool": "string", "errorMessage": "string", "domain": "string?", "flowDescription": "string?", "toolContext": "object?", "userNotes": "string?"}}
+  }
+}
