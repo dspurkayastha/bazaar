@@ -1,0 +1,100 @@
+/**
+ * POST /approve { quoteHash, memberId }: an owner approves exactly one quote hash. We store an Approval
+ * (30 min, single use), then re-run the gate for that quote; the gate places only if it now says PAY.
+ * The decision (PAY / HOLD / BLOCK) is returned as data; 4xx is only for bad input and non-owners.
+ */
+import type { FastifyInstance } from 'fastify';
+import { gateLine } from '../../agent/tools.js';
+import { PolicyBlock, PolicyHold } from '../../core/errors.js';
+import { newId } from '../../core/ids.js';
+import type { Approval, PlacedOrder, PolicyDecision } from '../../core/types.js';
+import { contextBuilder } from '../../policy/context.js';
+import { needsRequote, placeWithGate } from '../../policy/gate.js';
+import { ApiError, body, reqString, type ApiDeps } from '../http.js';
+
+export const APPROVAL_TTL_MS = 30 * 60_000;
+const SPEND_LOOKBACK_MS = 33 * 24 * 3_600_000;
+
+export interface ApproveOutcome {
+  approval: Approval;
+  decision: PolicyDecision;
+  placed: boolean;
+  order?: PlacedOrder;
+  /** True when the cart changed since the quote and the agent must build a new one. */
+  requote: boolean;
+  gateLine: string;
+}
+
+export async function approveQuote(deps: ApiDeps, quoteHash: string, memberId: string): Promise<ApproveOutcome> {
+  const stored = await deps.store.getQuote(quoteHash);
+  if (!stored) throw new ApiError(404, 'no quote with that hash');
+  const { quote } = stored;
+  const household = await deps.store.loadHousehold(stored.householdId);
+  const member = household.members.find((m) => m.id === memberId);
+  if (!member) throw new ApiError(404, 'unknown member');
+  if (member.role !== 'owner') throw new ApiError(403, 'only an owner can approve');
+  const place = household.places.find((p) => p.id === quote.placeId);
+  if (!place) throw new ApiError(404, "the quote's place no longer exists");
+  const supplier = deps.suppliers.find((s) => s.id === quote.supplierId);
+  if (!supplier) throw new ApiError(409, `${quote.supplierId} is not available`);
+
+  const now = deps.now?.() ?? new Date().toISOString();
+  const approval: Approval = {
+    id: newId('ap'),
+    quoteHash,
+    memberId,
+    createdAt: now,
+    expiresAt: new Date(Date.parse(now) + APPROVAL_TTL_MS).toISOString(),
+  };
+  await deps.store.saveApproval(approval);
+
+  const payment = deps.payment ?? { kind: 'cod' as const };
+  const [approvals, ledger, quantityHistory] = await Promise.all([
+    deps.store.loadApprovals(quote),
+    deps.store.loadSpendRows(household.id, new Date(Date.parse(now) - SPEND_LOOKBACK_MS).toISOString()),
+    deps.store.loadQuantityHistory(household.id, now),
+  ]);
+  try {
+    const res = await placeWithGate({
+      supplier,
+      payment,
+      recorder: deps.store.recorder,
+      ctxBuilder: contextBuilder({
+        household,
+        place,
+        quote,
+        approvals,
+        requestingMember: member,
+        ledger,
+        quantityHistory,
+        now,
+      }),
+    });
+    return {
+      approval,
+      decision: res.decision,
+      placed: true,
+      order: res.order,
+      requote: false,
+      gateLine: gateLine({ decision: res.decision, quote, order: res.order, payment }),
+    };
+  } catch (err) {
+    if (err instanceof PolicyHold || err instanceof PolicyBlock) {
+      return {
+        approval,
+        decision: err.decision,
+        placed: false,
+        requote: needsRequote(err),
+        gateLine: gateLine({ decision: err.decision, quote, payment }),
+      };
+    }
+    throw err;
+  }
+}
+
+export function registerApproveRoutes(app: FastifyInstance, deps: ApiDeps): void {
+  app.post('/approve', async (req) => {
+    const o = body(req.body);
+    return approveQuote(deps, reqString(o, 'quoteHash', 128), reqString(o, 'memberId', 128));
+  });
+}
