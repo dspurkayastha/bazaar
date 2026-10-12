@@ -80,3 +80,12 @@ System prompt is built from the household profile (defaults, recipes, pantry, pl
 - `POST /webhooks/whatsapp` stub that maps a message to ShopRequest with the member resolved by phone.
 
 Auth for v1: a single bearer token in env. No UI.
+
+## Amendments (12 Oct, after the foundation build)
+
+- `QuoteLine.itemKey?` added so quantity bounds and defaults join on the item class, not the variant id.
+- `ItemDefault.product?` added for the product line within a brand.
+- `Approval.consumedAt?` added; approvals are single-use. The gate's context builder passes only unconsumed approvals and `recordPlaced` marks the used one consumed.
+- Scheduled orders: an approval with `conditions.lineHash` binds to the sorted lines (`variantId:qty`), not the full quote hash. At fire time the engine accepts such an approval when the quote's line hash matches, every line is in stock, `total <= conditions.maxTotal`, and `now >= notBefore`. `core/hash.ts` exports `lineHash(lines)`. A hash-bound approval (no conditions) still requires the exact quote hash.
+- `quotes.hash` inserts use ON CONFLICT DO NOTHING.
+- Daily cap counts unattended (PAY-without-approval) orders only; monthly cap counts all placed orders.

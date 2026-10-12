@@ -62,6 +62,8 @@ export interface ItemDefault {
   key: string;
   aliases: string[]; // "dudh", "doi"
   brand?: string;
+  /** Product line within the brand, e.g. "American Nuts", "Lactose Free" */
+  product?: string;
   size?: string; // "250 ml x 4"
   quantityPerHead?: number; // scaled by people count
   category: ItemCategory;
@@ -129,6 +131,8 @@ export interface CartLine {
 }
 
 export interface QuoteLine {
+  /** Normalised item class when known (bridges to profile defaults and quantityHistory) */
+  itemKey?: string;
   variantId: string;
   skuId?: string;
   name: string;
@@ -207,8 +211,14 @@ export interface Approval {
   memberId: string; // must be an owner
   createdAt: ISODateTime;
   expiresAt: ISODateTime;
-  /** Conditions re-checked at fire time for scheduled orders */
-  conditions?: { inStock?: boolean; maxTotal?: Paise; notBefore?: ISODateTime };
+  /** Set when the approval has been used to place an order; single-use */
+  consumedAt?: ISODateTime;
+  /**
+   * Scheduled orders: a conditional approval binds to the LINES (sorted variantId:qty) rather than the
+   * full hash, and covers any fire-time quote with the same lines whose total <= maxTotal and whose
+   * items are in stock. `lineHash` is sha256 of the sorted lines; see core/hash.ts.
+   */
+  conditions?: { lineHash?: string; inStock?: boolean; maxTotal?: Paise; notBefore?: ISODateTime };
 }
 
 export interface PolicyContext {
