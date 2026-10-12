@@ -12,8 +12,10 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh
   bash /tmp/nodesource_setup.sh
   apt-get install -y nodejs
-  npm i -g pm2 pnpm
-  pm2 update   # respawn the PM2 daemon and existing apps on the new runtime
+  npm i -g pnpm
+  # Deliberately NOT running `pm2 update`: it respawns the daemon and other apps on this box
+  # (apollo-web, sciscribe-web) did not come back on 12 Oct 2026. They keep running on the old
+  # runtime until their next restart, which is fine.
 fi
 command -v pnpm >/dev/null || npm i -g pnpm
 command -v pm2 >/dev/null || npm i -g pm2
@@ -58,12 +60,24 @@ if ! grep -q '^BAZAAR_HOUSEHOLD_ID=hh_' .env; then
 fi
 
 echo "== pm2"
+if ! grep -q '^ANTHROPIC_API_KEY=sk-' .env; then
+  echo "   ANTHROPIC_API_KEY is empty: not starting bazaar (it would crash-loop)."
+  echo "   Set it in /opt/bazaar/.env, then: pm2 start deploy/ecosystem.config.cjs && pm2 save"
+  exit 0
+fi
+count_apps() { pm2 jlist 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).length)}catch{console.log(0)}})'; }
+BEFORE=$(count_apps)
 pm2 startOrReload deploy/ecosystem.config.cjs --update-env
-pm2 save
+AFTER=$(count_apps)
+# Only persist the process list if nothing that was running before has disappeared.
+if [ "$AFTER" -ge "$BEFORE" ] && [ "$AFTER" -ge 1 ]; then
+  pm2 save
+else
+  echo "   !! PM2 had $BEFORE apps before and $AFTER after; NOT saving the process list. Check 'pm2 ls'."
+fi
 
 echo "== health"
-sleep 2
-curl -fsS http://127.0.0.1:8787/health && echo
+for i in $(seq 1 15); do curl -fsS http://127.0.0.1:8787/health && echo && break; sleep 1; done
 echo
 echo "Next: pnpm auth:instamart   (needs: ssh -L 8765:127.0.0.1:8765 <user>@<vps> from a laptop, then open the printed URL)"
 echo "Optional Caddy: add to /etc/caddy/Caddyfile ->  bazaar.sciscribesolutions.com { reverse_proxy 127.0.0.1:8787 }  then: sudo systemctl reload caddy"
