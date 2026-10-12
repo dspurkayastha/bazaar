@@ -52,6 +52,7 @@ export interface SetupCodeRecord {
 /** The approval PIN of one member (owners). Lockout state lives with it. */
 export interface PinRecord {
   memberId: string;
+  householdId: string;
   /** `scrypt$N$r$p$<salt b64>$<hash b64>` */
   hash: string;
   setAt: ISODateTime;

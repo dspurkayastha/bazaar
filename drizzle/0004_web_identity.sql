@@ -8,6 +8,7 @@ CREATE TABLE "member_phones" (
 --> statement-breakpoint
 CREATE TABLE "member_pins" (
 	"member_id" text PRIMARY KEY NOT NULL,
+	"household_id" text NOT NULL,
 	"hash" text NOT NULL,
 	"set_at" timestamp with time zone NOT NULL,
 	"failures" jsonb DEFAULT '[]'::jsonb NOT NULL,
@@ -85,6 +86,7 @@ ALTER TABLE "places" ALTER COLUMN "key" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "member_phones" ADD CONSTRAINT "member_phones_household_id_households_id_fk" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "member_phones" ADD CONSTRAINT "member_phones_member_id_members_id_fk" FOREIGN KEY ("member_id") REFERENCES "public"."members"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "member_pins" ADD CONSTRAINT "member_pins_member_id_members_id_fk" FOREIGN KEY ("member_id") REFERENCES "public"."members"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "member_pins" ADD CONSTRAINT "member_pins_household_id_households_id_fk" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "quote_rejections" ADD CONSTRAINT "quote_rejections_household_id_households_id_fk" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "quote_rejections" ADD CONSTRAINT "quote_rejections_member_id_members_id_fk" FOREIGN KEY ("member_id") REFERENCES "public"."members"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "security_events" ADD CONSTRAINT "security_events_household_id_households_id_fk" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

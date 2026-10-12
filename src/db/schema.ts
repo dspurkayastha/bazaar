@@ -384,6 +384,9 @@ export const memberPins = pgTable('member_pins', {
   memberId: text('member_id')
     .primaryKey()
     .references(() => members.id, { onDelete: 'cascade' }),
+  householdId: text('household_id')
+    .notNull()
+    .references(() => households.id, { onDelete: 'cascade' }),
   hash: text('hash').notNull(),
   setAt: ts('set_at').notNull(),
   failures: jsonb('failures').$type<string[]>().notNull().default([]),

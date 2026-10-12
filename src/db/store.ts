@@ -490,6 +490,7 @@ export class DbStore implements Store {
     if (!r) return undefined;
     return {
       memberId: r.memberId,
+      householdId: r.householdId,
       hash: r.hash,
       setAt: iso(r.setAt)!,
       failures: r.failures,
@@ -502,6 +503,7 @@ export class DbStore implements Store {
   async savePin(p: PinRecord): Promise<void> {
     const values = {
       memberId: p.memberId,
+      householdId: p.householdId,
       hash: p.hash,
       setAt: p.setAt,
       failures: p.failures,

@@ -1,5 +1,5 @@
 {
-  "id": "ac97a106-8599-4f1b-a98f-3c85cd83989b",
+  "id": "9877a3dc-5183-4619-8d60-ce88ead27bde",
   "prevId": "2e622464-44e0-4719-bace-cffd66e7ca85",
   "version": "7",
   "dialect": "postgresql",
@@ -789,6 +789,12 @@
           "primaryKey": true,
           "notNull": true
         },
+        "household_id": {
+          "name": "household_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "hash": {
           "name": "hash",
           "type": "text",
@@ -836,6 +842,19 @@
           "tableTo": "members",
           "columnsFrom": [
             "member_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "member_pins_household_id_households_id_fk": {
+          "name": "member_pins_household_id_households_id_fk",
+          "tableFrom": "member_pins",
+          "tableTo": "households",
+          "columnsFrom": [
+            "household_id"
           ],
           "columnsTo": [
             "id"
