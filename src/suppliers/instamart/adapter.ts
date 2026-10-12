@@ -211,6 +211,11 @@ function rowsFromBill(
   }
   if (isObj(bill)) {
     for (const [k, v] of Object.entries(bill)) {
+      // A {label, value} row held directly under a key, e.g. billBreakdown.toPay = {label:"To Pay", value:"₹1396"}
+      if (isObj(v) && str(pick(v, 'label', 'title')) !== undefined && pick(v, 'value', 'amount') !== undefined) {
+        out.push({ label: str(pick(v, 'label', 'title')) as string, value: pick(v, 'value', 'amount') });
+        continue;
+      }
       if (Array.isArray(v)) rowsFromBill(v, out, depth + 1);
       else if (isObj(v) && toPaise(v) === undefined) rowsFromBill(v, out, depth + 1);
       else if (toPaise(v) !== undefined && !/^(currency|count|itemCount|totalItems)$|Id$/.test(k))
@@ -274,13 +279,24 @@ function parseCart(raw: unknown, itemKeys: Map<string, string>, log?: SanitiseLo
   const parsed = parseCartBody(raw, itemKeys, log);
   const root = isObj(raw) ? raw : {};
   const cart = isObj(root.cart) ? root.cart : root;
-  const addressId = str(pick(cart, 'addressId', 'selectedAddressId', 'deliveryAddressId'));
+  const details = isObj(cart.selectedAddressDetails) ? cart.selectedAddressDetails : {};
+  const addressId =
+    str(pick(cart, 'addressId', 'selectedAddressId', 'deliveryAddressId', 'selectedAddress')) ?? str(details.id);
   return addressId !== undefined ? { ...parsed, addressId } : parsed;
+}
+
+/**
+ * Saved-address ids from get_addresses look like "<base>__<suffix>" while get_cart reports only "<base>"
+ * (observed live, 12 Oct 2026). Compare on the base part.
+ */
+export function sameAddress(a: string, b: string): boolean {
+  const base = (s: string) => s.split('__')[0] as string;
+  return a === b || base(a) === base(b);
 }
 
 /** The server cart must be priced for the address we are about to pay to; otherwise it is not our quote. */
 function assertCartAddress(parsed: CartParse, expected: string, op: string): void {
-  if (parsed.addressId !== undefined && parsed.addressId !== expected) {
+  if (parsed.addressId !== undefined && !sameAddress(parsed.addressId, expected)) {
     throw new QuoteMismatch(
       `address ${expected}`,
       `address ${parsed.addressId}`,
@@ -308,14 +324,15 @@ function parseCartBody(raw: unknown, itemKeys: Map<string, string>, log?: Saniti
       );
     }
     const price = isObj(it.price) ? it.price : {};
+    // Live get_cart (12 Oct 2026) carries the per-unit payable price as item.discountedFinalPrice.
     let unit =
-      toPaise(pick(price, 'offerPrice', 'sellingPrice')) ??
-      toPaise(pick(it, 'offerPrice', 'sellingPrice', 'unitPrice'));
+      toPaise(pick(price, 'offerPrice', 'sellingPrice', 'discountedFinalPrice')) ??
+      toPaise(pick(it, 'discountedFinalPrice', 'finalPrice', 'offerPrice', 'sellingPrice', 'unitPrice'));
     if (unit === undefined) {
       const lineAmount = toPaise(pick(it, 'totalPrice', 'lineTotal', 'itemTotal'));
       if (lineAmount !== undefined && lineAmount % quantity === 0) unit = lineAmount / quantity;
     }
-    const rawName = str(pick(it, 'displayName', 'name', 'productName')) ?? spinId;
+    const rawName = str(pick(it, 'displayName', 'itemName', 'name', 'productName')) ?? spinId;
     const brand = str(pick(it, 'brandName', 'brand'));
     const base = `${ID}:cart:${spinId}`;
     const name = sanitiseField(rawName, `${base}.name`, log, '(name withheld)');
@@ -333,7 +350,11 @@ function parseCartBody(raw: unknown, itemKeys: Map<string, string>, log?: Saniti
       variantId: spinId,
       ...(skuId !== undefined ? { skuId } : {}),
       name,
-      label: sanitiseField(str(pick(it, 'quantityDescription', 'variantDescription')) ?? '', `${base}.label`, log),
+      label: sanitiseField(
+        str(pick(it, 'quantityDescription', 'itemVariant', 'variantDescription')) ?? '',
+        `${base}.label`,
+        log,
+      ),
       quantity,
       unitPrice: unit,
       lineTotal: unit * quantity,
@@ -354,6 +375,11 @@ function parseCartBody(raw: unknown, itemKeys: Map<string, string>, log?: Saniti
       `bill item total ${bill.itemTotal} paise does not match the cart lines (${itemTotal} paise); refusing to price this cart`,
     );
   }
+  // Swiggy rounds To Pay to the whole rupee (live: 1383.00 + 12.98 -> 1396). Record a sub-rupee
+  // difference as an explicit 'rounding' fee so the quote still reconciles exactly and the hash covers it.
+  const preRound = bill.fees.reduce((s, f) => s + f.amount, 0);
+  const roundingDiff = bill.total - (itemTotal + preRound);
+  if (roundingDiff !== 0 && Math.abs(roundingDiff) < 100) bill.fees.push({ label: 'rounding', amount: roundingDiff });
   const feeSum = bill.fees.reduce((s, f) => s + f.amount, 0);
   if (itemTotal + feeSum !== bill.total) {
     throw new SupplierError(

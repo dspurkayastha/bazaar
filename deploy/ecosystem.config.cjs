@@ -1,3 +1,5 @@
+/* eslint-env node */
+/* global module, __dirname */
 // PM2 process file. Run from the repo root: pm2 start deploy/ecosystem.config.cjs
 module.exports = {
   apps: [
