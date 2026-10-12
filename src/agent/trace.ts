@@ -35,6 +35,36 @@ export interface RequestTelemetry {
   usage?: TokenUsage;
 }
 
+/** How a voice turn ended: the shop outcomes, plus a plain spoken reply and a barge-in. */
+export type VoiceOutcome = Outcome | 'replied' | 'interrupted';
+
+/**
+ * One `voice_turn` line per spoken turn (info). Latencies in ms, measured on the gateway:
+ *   sttFinalMs        END_SPEECH → final transcript from Sarvam
+ *   llmFirstTokenMs   turn start (transcript in hand) → first text delta from the model
+ *   ttsFirstAudioMs   turn start → first MP3 bytes sent to the app
+ *   totalMs           turn start → last audio_end (or the turn's end when nothing was spoken)
+ * No transcripts, reply text, tokens, keys or phone numbers: transcripts are logged at debug level only.
+ */
+export interface VoiceTurnTelemetry {
+  event: 'voice_turn';
+  sessionId: string;
+  turnId: string;
+  lang: string;
+  model: string;
+  sttFinalMs?: number;
+  llmFirstTokenMs?: number;
+  ttsFirstAudioMs?: number;
+  totalMs: number;
+  toolCalls: ToolCallTrace[];
+  outcome: VoiceOutcome;
+  /** Filler played while a tool ran. */
+  filler?: boolean;
+  /** Barge-in / interrupt / superseded. */
+  interrupted?: string;
+  usage?: TokenUsage;
+}
+
 /** Strings that must never reach a log: the place addresses and every member's channel address (phone). */
 export function sensitiveStrings(household: Household, place: Place): string[] {
   const out = new Set<string>();

@@ -290,7 +290,8 @@ export interface ShopRequest {
   id: string;
   householdId: string;
   memberId: string;
-  channel: 'siri' | 'whatsapp' | 'web';
+  /** 'voice': one turn of the iPhone app's voice session (/voice, docs/VOICE_PROTOCOL.md) */
+  channel: 'siri' | 'whatsapp' | 'web' | 'voice';
   text: string; // transcript
   receivedAt: ISODateTime;
   /** Optional client context for place inference */

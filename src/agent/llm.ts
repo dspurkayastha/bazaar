@@ -57,6 +57,11 @@ export interface LlmResponse {
 
 export interface LlmClient {
   create(req: LlmRequest): Promise<LlmResponse>;
+  /**
+   * Optional streaming variant (voice mode): same request and final response as `create`, plus every text delta as
+   * it is generated, so speech can start before the reply is complete. Aborting `req.signal` stops generation.
+   */
+  stream?(req: LlmRequest, onText: (delta: string) => void): Promise<LlmResponse>;
 }
 
 export const DEFAULT_MODEL = 'claude-sonnet-5-5';
@@ -69,30 +74,36 @@ export function modelFromEnv(env: NodeJS.ProcessEnv = process.env): string {
 export function anthropicClient(apiKey: string | undefined = process.env.ANTHROPIC_API_KEY): LlmClient {
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set (see .env.example)');
   const client = new Anthropic({ apiKey });
+  // Parallel tool use stays enabled (we never set disable_parallel_tool_use); the loop runs the calls concurrently.
+  const params = (req: LlmRequest) => ({
+    model: req.model,
+    max_tokens: req.max_tokens,
+    system: req.system,
+    tools: req.tools as Anthropic.Tool[],
+    messages: req.messages as Anthropic.MessageParam[],
+    ...(req.tool_choice ? { tool_choice: req.tool_choice as Anthropic.ToolChoice } : {}),
+  });
+  const toResponse = (res: Anthropic.Message): LlmResponse => {
+    const content: AssistantBlock[] = [];
+    for (const b of res.content) {
+      if (b.type === 'text') content.push({ type: 'text', text: b.text });
+      else if (b.type === 'tool_use') content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
+    }
+    return {
+      content,
+      stop_reason: res.stop_reason,
+      usage: { input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens },
+    };
+  };
   return {
     async create(req) {
-      // Parallel tool use stays enabled (we never set disable_parallel_tool_use); the loop runs the calls concurrently.
-      const res = await client.messages.create(
-        {
-          model: req.model,
-          max_tokens: req.max_tokens,
-          system: req.system,
-          tools: req.tools as Anthropic.Tool[],
-          messages: req.messages as Anthropic.MessageParam[],
-          ...(req.tool_choice ? { tool_choice: req.tool_choice as Anthropic.ToolChoice } : {}),
-        },
-        req.signal ? { signal: req.signal } : undefined,
-      );
-      const content: AssistantBlock[] = [];
-      for (const b of res.content) {
-        if (b.type === 'text') content.push({ type: 'text', text: b.text });
-        else if (b.type === 'tool_use') content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
-      }
-      return {
-        content,
-        stop_reason: res.stop_reason,
-        usage: { input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens },
-      };
+      const res = await client.messages.create(params(req), req.signal ? { signal: req.signal } : undefined);
+      return toResponse(res);
+    },
+    async stream(req, onText) {
+      const s = client.messages.stream(params(req), req.signal ? { signal: req.signal } : undefined);
+      s.on('text', (delta) => onText(delta));
+      return toResponse(await s.finalMessage());
     },
   };
 }
