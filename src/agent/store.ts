@@ -50,6 +50,8 @@ export interface Store {
   getQuote(hash: string): Promise<{ householdId: string; quote: Quote } | undefined>;
 
   saveApproval(approval: Approval): Promise<void>;
+  /** Mark an approval used (no-op if already consumed). Used when a repeat /approve resolves as a replay. */
+  consumeApproval(approvalId: string, at: ISODateTime): Promise<void>;
   /** Unconsumed approvals that could cover this quote (exact hash, or line-bound). */
   loadApprovals(quote: Quote): Promise<Approval[]>;
 

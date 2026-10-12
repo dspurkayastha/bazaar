@@ -66,6 +66,11 @@ export async function approveQuote(deps: ApiDeps, quoteHash: string, who: Authed
       ...(deps.store.gateLock ? { lock: deps.store.gateLock } : {}),
       ctxBuilder: loadingContextBuilder(deps.store, { household, place, quote, requestingMember: member, now }),
     });
+    if (res.replayed) {
+      // The quote was already placed (double tap): this approval paid for nothing, so it must not stay live.
+      await deps.store.consumeApproval(approval.id, now);
+      approval.consumedAt = now;
+    }
     return {
       approval,
       decision: res.decision,

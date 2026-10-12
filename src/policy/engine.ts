@@ -106,6 +106,14 @@ function scopeMismatch(ctx: PolicyContext, a: Approval): string | undefined {
     if (who !== a.memberId && !(a.conditions?.forMembers ?? []).includes(who)) {
       problems.push(`does not cover requests by ${ctx.requestingMember.name}`);
     }
+  } else {
+    // Hash-bound: only owners ride an owner's approval. An adder's identical cart is HELD even when a leftover
+    // owner approval on the exact hash exists.
+    const r = ctx.requestingMember;
+    const ownerOfHousehold = r.role === 'owner' && r.householdId === ctx.household.id;
+    if (r.id !== a.memberId && !ownerOfHousehold) {
+      problems.push(`does not cover requests by ${r.name} (${r.role}); only owners`);
+    }
   }
   return problems.length > 0 ? problems.join('; ') : undefined;
 }

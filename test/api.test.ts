@@ -116,6 +116,8 @@ describe('POST /request and POST /approve', () => {
     expect(again.order.supplierOrderId).toBe(out.order.supplierOrderId);
     expect(again.decision.approvalId).toBe(out.approval.id);
     expect(again.requote).toBe(false);
+    expect(again.approval.consumedAt).toBeDefined();
+    expect(store.approvals.filter((a) => a.consumedAt === undefined)).toEqual([]);
     expect(supplier.placeCalls).toBe(1);
     expect(store.orders).toHaveLength(1);
 

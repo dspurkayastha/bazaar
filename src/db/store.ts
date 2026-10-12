@@ -216,6 +216,13 @@ export class DbStore implements Store {
     });
   }
 
+  async consumeApproval(approvalId: string, at: ISODateTime): Promise<void> {
+    await this.db
+      .update(approvals)
+      .set({ consumedAt: at })
+      .where(and(eq(approvals.id, approvalId), isNull(approvals.consumedAt)));
+  }
+
   loadApprovals(quote: Quote): Promise<Approval[]> {
     return loadCandidateApprovals(this.db, quote);
   }

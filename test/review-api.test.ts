@@ -120,6 +120,10 @@ describe('attempt 4: POST /approve', () => {
     const replay = bodies.find((b) => !b.placed);
     expect(replay.alreadyPlaced).toBe(true);
     expect(replay.order.supplierOrderId).toBe(supplier.placed[0]!.order.supplierOrderId);
+    // Neither tap leaves a live approval behind: the paying one is consumed by the order, the replay's on replay.
+    expect(store.approvals).toHaveLength(2);
+    expect(store.approvals.filter((a) => a.consumedAt === undefined)).toEqual([]);
+    expect(replay.approval.consumedAt).toBe(NOW);
   });
 });
 

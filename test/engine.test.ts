@@ -81,9 +81,23 @@ describe('policy engine — CONTRACTS.md benchmark cases', () => {
     const d = decide(ctx({ household: h, place: home, quote: q, requestingMember: adder(h) }));
     expect(d.verdict).toBe('HOLD');
     expect(rules(d)).toEqual(['role']);
-    // An owner's approval on the hash completes it.
-    const ok = decide(
+    // An owner's approval on the hash does NOT cover an adder's request: only owners ride an owner approval.
+    const still = decide(
       ctx({ household: h, place: home, quote: q, requestingMember: adder(h), approvals: [approval(h, q.hash)] }),
+    );
+    expect(still.verdict).toBe('HOLD');
+    expect(rules(still)).toEqual(['role', 'approval_mismatch']);
+    // Another owner of the household is covered.
+    const coOwner = { ...adder(h), id: 'mem_co_owner', name: 'Co-owner', role: 'owner' as const };
+    const h2 = { ...h, members: [...h.members, coOwner] };
+    const ok = decide(
+      ctx({
+        household: h2,
+        place: home,
+        quote: groceryCart1123(home),
+        requestingMember: coOwner,
+        approvals: [approval(h2, groceryCart1123(home).hash)],
+      }),
     );
     expect(ok.verdict).toBe('PAY');
   });

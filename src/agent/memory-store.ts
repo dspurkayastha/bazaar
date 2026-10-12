@@ -186,6 +186,11 @@ export class MemoryStore implements Store {
     this.approvals.push(approval);
   }
 
+  async consumeApproval(approvalId: string, at: ISODateTime): Promise<void> {
+    const a = this.approvals.find((x) => x.id === approvalId);
+    if (a && a.consumedAt === undefined) a.consumedAt = at;
+  }
+
   async loadApprovals(quote: Quote): Promise<Approval[]> {
     const lh = lineHash(quote.lines);
     // Live objects on purpose: consumption by the recorder must be visible on the next read.

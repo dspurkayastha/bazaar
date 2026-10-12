@@ -194,10 +194,11 @@ describe('attempt 1: call paths through the agent', () => {
   });
 
   /**
-   * NOTE (by contract, not a bug): an owner approval that met a BLOCK (cart drifted) stays live for 30 minutes on
-   * its hash. A later request — from anyone, an adder included — that rebuilds the identical cart pays on it, once.
+   * Was a NOTE (allowed by the old contract): an owner approval that met a BLOCK stays live for 30 minutes on its
+   * hash, and a later adder request rebuilding the identical cart paid on it. Closed: a hash-bound approval covers
+   * only owners' requests, so the adder is HELD and the approval stays unused.
    */
-  it('1d NOTE: an orphaned owner approval pays a later adder request that rebuilds the identical cart', async () => {
+  it('1d an orphaned owner approval does not pay a later adder request that rebuilds the identical cart', async () => {
     const lines = [asked('v-milk', 2), asked('v-rice', 1), asked('v-chicken', 2), asked('v-onion-1kg', 4)];
     const first = await runShopRequestDetailed(
       req('biryani for 6'),
@@ -229,7 +230,12 @@ describe('attempt 1: call paths through the agent', () => {
         ]),
       ),
     );
-    expect(second.result.decision).toMatchObject({ verdict: 'PAY', approvalId: 'ap_orphan' });
-    expect(supplier.placeCalls).toBe(1);
+    expect(second.result.decision?.verdict).toBe('HOLD');
+    expect(second.result.decision?.approvalId).toBeUndefined();
+    expect(second.result.decision?.reasons.map((r) => r.rule)).toEqual(
+      expect.arrayContaining(['role', 'approval_mismatch']),
+    );
+    expect(supplier.placeCalls).toBe(0);
+    expect(store.approvals.find((a) => a.id === 'ap_orphan')!.consumedAt).toBeUndefined();
   });
 });
