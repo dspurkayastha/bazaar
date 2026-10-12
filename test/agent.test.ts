@@ -202,7 +202,9 @@ describe('runShopRequest with the stub supplier', () => {
     expect(second.tool_choice).toEqual({ type: 'none' });
     const shown = llm.resultsAt(1);
     expect(shown.filter((r) => r.is_error)).toHaveLength(2);
-    expect(result.summary).toContain('Ran out of room');
+    // The model's narration is never the summary when the budget ends the run.
+    expect(result.summary).not.toContain('Ran out of room');
+    expect(result.summary).toMatch(/^For home: I couldn't build the cart — I used all 3 tool calls/);
   });
 
   it('never throws into the model: bad input, unknown tools, unseen variants, early proposals', async () => {
@@ -220,7 +222,8 @@ describe('runShopRequest with the stub supplier', () => {
     const shown = llm.resultsAt(1);
     expect(shown.map((r) => r.body.ok)).toEqual([false, false, false, false, false]);
     expect(shown[0]!.body.status).toBe('ERROR');
-    expect(String(shown[1]!.body.error)).toContain('search first');
+    expect(shown[1]!.body.error).toMatchObject({ kind: 'invalid_line' });
+    expect(String((shown[1]!.body.error as { message: string }).message)).toContain('search first');
     expect(String(shown[2]!.body.error)).toContain('unknown tool');
     expect(supplier.placeCalls).toBe(0);
     expect(result.quotes).toEqual([]);
@@ -236,6 +239,7 @@ describe('runShopRequest with the stub supplier', () => {
       'read_cart',
       'resolve_place',
       'search',
+      'search_many',
     ]);
     for (const t of TOOL_SPECS) {
       const props = Object.keys(t.input_schema.properties);
