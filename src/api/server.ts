@@ -16,10 +16,14 @@ import { registerWebhookRoutes } from './routes/webhooks.js';
 
 export type { ApiDeps } from './http.js';
 
-export function buildServer(deps: ApiDeps, opts: { logger?: boolean } = {}): FastifyInstance {
+export function buildServer(
+  deps: ApiDeps,
+  opts: { logger?: boolean; /** Send pino output here (tests). */ logStream?: { write(msg: string): void } } = {},
+): FastifyInstance {
   if (!deps.apiToken) throw new Error('BAZAAR_API_TOKEN is not set; refusing to start an unauthenticated API');
 
-  const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 64 * 1024 });
+  const logger = opts.logStream ? { level: 'info', stream: opts.logStream } : (opts.logger ?? false);
+  const app = Fastify({ logger, bodyLimit: 64 * 1024 });
   app.decorateRequest('member', undefined);
   app.addHook('onRequest', authHook(deps.store, deps.apiToken));
 

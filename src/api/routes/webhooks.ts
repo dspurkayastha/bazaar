@@ -11,7 +11,8 @@
  * marked `trusted: true` in Member.channels, in which case the normal policy applies.
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { makeRequest, runShopRequest } from '../../agent/loop.js';
+import { makeRequest } from '../../agent/loop.js';
+import { runLogged } from '../run.js';
 import { verifyWebhookSignature } from '../../core/credentials.js';
 import { ApiError, body, reqString, type ApiDeps } from '../http.js';
 
@@ -62,7 +63,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: ApiDeps): void
         { householdId: who.householdId, memberId: who.memberId, text, channel: 'whatsapp' },
         deps.now?.() ?? new Date().toISOString(),
       );
-      const result = await runShopRequest(request, deps, { webhook: { channel: 'whatsapp', trusted } });
+      const { result } = await runLogged(request, deps, req.log, { webhook: { channel: 'whatsapp', trusted } });
       return { reply: result.summary, result };
     });
   });

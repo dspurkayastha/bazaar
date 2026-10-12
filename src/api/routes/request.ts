@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { makeRequest, runShopRequest } from '../../agent/loop.js';
+import { makeRequest } from '../../agent/loop.js';
 import type { ShopRequest } from '../../core/types.js';
 import { memberOf, type AuthedMember } from '../auth.js';
 import { ApiError, body, optString, reqString, type ApiDeps } from '../http.js';
+import { runLogged } from '../run.js';
 
 const CHANNELS = ['siri', 'whatsapp', 'web'] as const;
 
@@ -49,7 +50,11 @@ export function parseShopRequest(raw: unknown, deps: ApiDeps, who: AuthedMember)
 }
 
 export function registerRequestRoutes(app: FastifyInstance, deps: ApiDeps): void {
-  app.post('/request', { config: { auth: 'member' } }, async (req) =>
-    runShopRequest(parseShopRequest(req.body, deps, memberOf(req)), deps),
-  );
+  app.post('/request', { config: { auth: 'member' } }, async (req) => {
+    const { result, telemetry } = await runLogged(parseShopRequest(req.body, deps, memberOf(req)), deps, req.log);
+    // `x-bazaar-debug: 1` adds the tool-call trace (names, timings, outcomes; no arguments) to the response.
+    return req.headers['x-bazaar-debug'] === '1'
+      ? { ...result, debug: { trace: telemetry.toolCalls, outcome: telemetry.outcome, totalMs: telemetry.totalMs } }
+      : result;
+  });
 }
