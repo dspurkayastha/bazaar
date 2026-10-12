@@ -80,6 +80,22 @@ export const memberCredentials = pgTable(
   (t) => [index('member_credentials_member_idx').on(t.memberId)],
 );
 
+/** Member phone numbers (E.164). One row per number; a number belongs to at most one member of a household. */
+export const memberPhones = pgTable(
+  'member_phones',
+  {
+    householdId: text('household_id')
+      .notNull()
+      .references(() => households.id, { onDelete: 'cascade' }),
+    phone: text('phone').notNull(),
+    memberId: text('member_id')
+      .notNull()
+      .references(() => members.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.householdId, t.phone] }), index('member_phones_member_idx').on(t.memberId)],
+);
+
 export const places = pgTable(
   'places',
   {
@@ -87,6 +103,8 @@ export const places = pgTable(
     householdId: text('household_id')
       .notNull()
       .references(() => households.id, { onDelete: 'cascade' }),
+    /** Stable slug (core/identity.ts slugify), unique per household. */
+    key: text('key').notNull(),
     nickname: text('nickname').notNull(),
     aliases: jsonb('aliases').$type<string[]>().notNull().default([]),
     canonicalAddress: text('canonical_address').notNull(),
@@ -105,6 +123,7 @@ export const places = pgTable(
   },
   (t) => [
     uniqueIndex('places_household_nickname_uq').on(t.householdId, t.nickname),
+    uniqueIndex('places_household_key_uq').on(t.householdId, t.key),
     // At most one default place per household.
     uniqueIndex('places_one_default_uq')
       .on(t.householdId)
@@ -296,4 +315,114 @@ export const supplierTokens = pgTable(
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.householdId, t.supplierId] })],
+);
+
+// ---------- web identity (docs/WEB_API.md) ----------
+
+/** WebAuthn credentials (passkeys). The id is the credential id (base64url). */
+export const webauthnCredentials = pgTable(
+  'webauthn_credentials',
+  {
+    id: text('id').primaryKey(),
+    memberId: text('member_id')
+      .notNull()
+      .references(() => members.id, { onDelete: 'cascade' }),
+    publicKey: text('public_key').notNull(),
+    counter: integer('counter').notNull().default(0),
+    transports: jsonb('transports').$type<string[]>().notNull().default([]),
+    deviceType: text('device_type'),
+    backedUp: boolean('backed_up'),
+    createdAt: createdAt(),
+    lastUsedAt: ts('last_used_at'),
+  },
+  (t) => [index('webauthn_credentials_member_idx').on(t.memberId)],
+);
+
+/** Browser sessions (`bz_session` cookie). Only sha256(token) is stored. */
+export const webSessions = pgTable(
+  'web_sessions',
+  {
+    id: text('id').primaryKey(),
+    memberId: text('member_id')
+      .notNull()
+      .references(() => members.id, { onDelete: 'cascade' }),
+    householdId: text('household_id')
+      .notNull()
+      .references(() => households.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: ts('created_at').notNull(),
+    lastSeenAt: ts('last_seen_at').notNull(),
+    expiresAt: ts('expires_at').notNull(),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [index('web_sessions_member_idx').on(t.memberId)],
+);
+
+/** One-time passkey setup links. Only sha256(code) is stored. */
+export const setupCodes = pgTable(
+  'setup_codes',
+  {
+    id: text('id').primaryKey(),
+    memberId: text('member_id')
+      .notNull()
+      .references(() => members.id, { onDelete: 'cascade' }),
+    householdId: text('household_id')
+      .notNull()
+      .references(() => households.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash').notNull().unique(),
+    createdBy: text('created_by'),
+    createdAt: ts('created_at').notNull(),
+    expiresAt: ts('expires_at').notNull(),
+    usedAt: ts('used_at'),
+    revokedAt: ts('revoked_at'),
+  },
+  (t) => [index('setup_codes_member_idx').on(t.memberId)],
+);
+
+/** Approval PINs (scrypt) and their lockout state. Never logged, never returned. */
+export const memberPins = pgTable('member_pins', {
+  memberId: text('member_id')
+    .primaryKey()
+    .references(() => members.id, { onDelete: 'cascade' }),
+  hash: text('hash').notNull(),
+  setAt: ts('set_at').notNull(),
+  failures: jsonb('failures').$type<string[]>().notNull().default([]),
+  consecutive: integer('consecutive').notNull().default(0),
+  lockedUntil: ts('locked_until'),
+  hardLockedAt: ts('hard_locked_at'),
+});
+
+/** Security audit trail: PIN set/reset/lockouts, passkey registrations, setup links. Append-only. */
+export const securityEvents = pgTable(
+  'security_events',
+  {
+    id: text('id').primaryKey(),
+    householdId: text('household_id')
+      .notNull()
+      .references(() => households.id, { onDelete: 'cascade' }),
+    memberId: text('member_id')
+      .notNull()
+      .references(() => members.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    at: ts('at').notNull(),
+    detail: jsonb('detail').$type<Record<string, string | number | boolean>>(),
+  },
+  (t) => [index('security_events_household_idx').on(t.householdId, t.at)],
+);
+
+/** Held carts someone rejected (POST /api/carts/:quoteHash/reject). */
+export const quoteRejections = pgTable(
+  'quote_rejections',
+  {
+    id: text('id').primaryKey(),
+    householdId: text('household_id')
+      .notNull()
+      .references(() => households.id, { onDelete: 'cascade' }),
+    quoteHash: text('quote_hash').notNull(),
+    memberId: text('member_id')
+      .notNull()
+      .references(() => members.id, { onDelete: 'cascade' }),
+    rejectedAt: ts('rejected_at').notNull(),
+  },
+  (t) => [index('quote_rejections_hash_idx').on(t.quoteHash)],
 );

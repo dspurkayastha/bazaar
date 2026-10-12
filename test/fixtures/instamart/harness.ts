@@ -50,6 +50,7 @@ export function fakeTool(replies: Record<string, Reply>): FakeTool {
 export const HOME: Place = {
   id: 'place_home',
   householdId: 'hh_1',
+  key: 'home',
   nickname: 'home',
   aliases: [],
   canonicalAddress: 'MASKED, Silchar',

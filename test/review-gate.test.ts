@@ -303,7 +303,7 @@ describe('attempt 1/6: static checks', () => {
         'core/money.ts:14', // rupees(): integer * 100
         'core/money.ts:32', // parseRupees(): integer * 100 + integer
         'core/money.ts:60', // formatINR(): display only
-        'core/types.ts:119', // a comment string ("10.4/100 ml")
+        'core/types.ts:123', // a comment string ("10.4/100 ml")
         // (fix 6b) the Instamart toPaise float fallbacks (Math.round(v * 100)) are gone: parseRupeesRounded is
         // string decomposition only.
       ].sort(),

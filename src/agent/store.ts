@@ -13,11 +13,13 @@ import type {
   ShopRequest,
   ShopResult,
 } from '../core/types.js';
+import type { IdentityStore } from '../auth/types.js';
 import type { DecisionRecorder } from '../policy/gate.js';
 import type { GateLock } from '../policy/lock.js';
 import type { SpendRow } from '../policy/spend.js';
 
-export interface Store {
+/** Web identity (passkeys, sessions, setup codes, PINs, rejections) is part of the same store: see auth/types.ts. */
+export interface Store extends IdentityStore {
   /** Records every gate evaluation and every placed order (and consumes the approval that paid). */
   readonly recorder: DecisionRecorder;
   /** Serialises gate runs per household (Postgres: advisory lock). Absent → the process-wide in-memory lock. */

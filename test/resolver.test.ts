@@ -17,6 +17,7 @@ function setup() {
     name: 'Ma',
     role: 'dependant',
     channels: [],
+    phones: [],
     defaultPlaceId: rahuls.id,
   };
   h.members.push(ma);

@@ -30,6 +30,7 @@
     "@fastify/rate-limit": "11.2.0",
     "@fastify/websocket": "11.3.1",
     "@modelcontextprotocol/sdk": "1.32.1",
+    "@simplewebauthn/server": "13.3.3",
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.4",
     "fastify": "^5.12.5",

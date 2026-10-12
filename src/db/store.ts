@@ -2,8 +2,17 @@
  * Postgres-backed Store. Composes the ledger helpers in ./ledger.ts; no business logic here.
  * Not exercised by unit tests (no DB in tests); MemoryStore is the reference implementation.
  */
-import { and, eq, gte, isNotNull, isNull, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, isNull, notInArray, sql } from 'drizzle-orm';
 import type { Store } from '../agent/store.js';
+import type {
+  GateActivity,
+  PasskeyRecord,
+  PinRecord,
+  QuoteRejection,
+  SecurityEvent,
+  SetupCodeRecord,
+  WebSessionRecord,
+} from '../auth/types.js';
 import { BazaarError } from '../core/errors.js';
 import type {
   Approval,
@@ -31,12 +40,30 @@ import {
   ledgerLines,
   ledgerOrders,
   memberCredentials,
+  memberPhones,
+  memberPins,
   members,
   places,
+  policyDecisions,
   profiles,
+  quoteRejections,
   quotes,
   requests,
+  securityEvents,
+  setupCodes,
+  webauthnCredentials,
+  webSessions,
 } from './schema.js';
+
+const iso = (v: string | null): string | undefined => (v === null ? undefined : new Date(v).toISOString());
+
+/** Postgres unique violation (e.g. the member_phones primary key). */
+function isUniqueViolation(err: unknown): boolean {
+  for (let e: unknown = err; e; e = (e as { cause?: unknown }).cause) {
+    if ((e as { code?: unknown }).code === '23505') return true;
+  }
+  return false;
+}
 
 const NINETY_DAYS_MS = 90 * 24 * 3_600_000;
 
@@ -67,11 +94,16 @@ export class DbStore implements Store {
     const db = this.db;
     const [h] = await db.select().from(households).where(eq(households.id, householdId));
     if (!h) throw new BazaarError('NOT_FOUND', `household ${householdId} not found`);
-    const [ms, ps, [pr], ds] = await Promise.all([
+    const [ms, ps, [pr], ds, phones] = await Promise.all([
       db.select().from(members).where(eq(members.householdId, householdId)),
       db.select().from(places).where(eq(places.householdId, householdId)),
       db.select().from(profiles).where(eq(profiles.householdId, householdId)),
       db.select().from(itemDefaults).where(eq(itemDefaults.householdId, householdId)),
+      db
+        .select()
+        .from(memberPhones)
+        .where(eq(memberPhones.householdId, householdId))
+        .orderBy(asc(memberPhones.position)),
     ]);
     const memberList: Member[] = ms.map((m) => ({
       id: m.id,
@@ -79,11 +111,13 @@ export class DbStore implements Store {
       name: m.name,
       role: m.role,
       channels: m.channels,
+      phones: phones.filter((p) => p.memberId === m.id).map((p) => p.phone),
       ...(m.defaultPlaceId ? { defaultPlaceId: m.defaultPlaceId } : {}),
     }));
     const placeList: Place[] = ps.map((p) => ({
       id: p.id,
       householdId: p.householdId,
+      key: p.key,
       nickname: p.nickname,
       aliases: p.aliases,
       canonicalAddress: p.canonicalAddress,
@@ -146,6 +180,7 @@ export class DbStore implements Store {
     const values = {
       id: p.id,
       householdId: p.householdId,
+      key: p.key,
       nickname: p.nickname,
       aliases: p.aliases,
       canonicalAddress: p.canonicalAddress,
@@ -287,8 +322,251 @@ export class DbStore implements Store {
       fees: o.fees,
       total: o.total,
       status: o.status,
+      ...(o.memberId ? { memberId: o.memberId } : {}),
       ...(o.quoteHash ? { quoteHash: o.quoteHash } : {}),
       ...(o.decision ? { decision: o.decision } : {}),
     }));
+  }
+
+  // ---------- identity (auth/types.ts IdentityStore) ----------
+
+  async saveMember(m: Member): Promise<void> {
+    const set = { name: m.name, role: m.role, channels: m.channels, defaultPlaceId: m.defaultPlaceId ?? null };
+    try {
+      await this.db.transaction(async (tx) => {
+        await tx
+          .insert(members)
+          .values({ id: m.id, householdId: m.householdId, ...set })
+          .onConflictDoUpdate({ target: members.id, set });
+        await tx.delete(memberPhones).where(eq(memberPhones.memberId, m.id));
+        if (m.phones.length > 0) {
+          await tx
+            .insert(memberPhones)
+            .values(m.phones.map((phone, position) => ({ householdId: m.householdId, phone, memberId: m.id, position })));
+        }
+      });
+    } catch (err) {
+      if (isUniqueViolation(err)) throw new BazaarError('PHONE_TAKEN', 'a phone already belongs to another member');
+      throw err;
+    }
+  }
+
+  private passkeyOf(r: typeof webauthnCredentials.$inferSelect): PasskeyRecord {
+    return {
+      id: r.id,
+      memberId: r.memberId,
+      publicKey: r.publicKey,
+      counter: r.counter,
+      transports: r.transports,
+      ...(r.deviceType !== null ? { deviceType: r.deviceType } : {}),
+      ...(r.backedUp !== null ? { backedUp: r.backedUp } : {}),
+      createdAt: iso(r.createdAt)!,
+      ...(r.lastUsedAt !== null ? { lastUsedAt: iso(r.lastUsedAt)! } : {}),
+    };
+  }
+
+  async listPasskeys(memberId: string): Promise<PasskeyRecord[]> {
+    const rows = await this.db.select().from(webauthnCredentials).where(eq(webauthnCredentials.memberId, memberId));
+    return rows.map((r) => this.passkeyOf(r));
+  }
+
+  async findPasskey(credentialId: string): Promise<PasskeyRecord | undefined> {
+    const [r] = await this.db.select().from(webauthnCredentials).where(eq(webauthnCredentials.id, credentialId));
+    return r ? this.passkeyOf(r) : undefined;
+  }
+
+  async savePasskey(p: PasskeyRecord): Promise<void> {
+    await this.db.insert(webauthnCredentials).values({
+      id: p.id,
+      memberId: p.memberId,
+      publicKey: p.publicKey,
+      counter: p.counter,
+      transports: p.transports,
+      deviceType: p.deviceType ?? null,
+      backedUp: p.backedUp ?? null,
+      createdAt: p.createdAt,
+    });
+  }
+
+  async updatePasskeyCounter(credentialId: string, counter: number, at: ISODateTime): Promise<void> {
+    await this.db
+      .update(webauthnCredentials)
+      .set({ counter, lastUsedAt: at })
+      .where(eq(webauthnCredentials.id, credentialId));
+  }
+
+  async passkeyMemberIds(householdId: string): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ memberId: webauthnCredentials.memberId })
+      .from(webauthnCredentials)
+      .innerJoin(members, eq(webauthnCredentials.memberId, members.id))
+      .where(eq(members.householdId, householdId));
+    return rows.map((r) => r.memberId);
+  }
+
+  async createSession(s: WebSessionRecord): Promise<void> {
+    await this.db.insert(webSessions).values({
+      id: s.id,
+      memberId: s.memberId,
+      householdId: s.householdId,
+      tokenHash: s.tokenHash,
+      createdAt: s.createdAt,
+      lastSeenAt: s.lastSeenAt,
+      expiresAt: s.expiresAt,
+    });
+  }
+
+  async findSessionByTokenHash(tokenHash: string): Promise<WebSessionRecord | undefined> {
+    const [r] = await this.db.select().from(webSessions).where(eq(webSessions.tokenHash, tokenHash));
+    if (!r) return undefined;
+    return {
+      id: r.id,
+      memberId: r.memberId,
+      householdId: r.householdId,
+      tokenHash: r.tokenHash,
+      createdAt: iso(r.createdAt)!,
+      lastSeenAt: iso(r.lastSeenAt)!,
+      expiresAt: iso(r.expiresAt)!,
+      ...(r.revokedAt !== null ? { revokedAt: iso(r.revokedAt)! } : {}),
+    };
+  }
+
+  async touchSession(id: string, lastSeenAt: ISODateTime, expiresAt: ISODateTime): Promise<void> {
+    await this.db.update(webSessions).set({ lastSeenAt, expiresAt }).where(eq(webSessions.id, id));
+  }
+
+  async revokeSession(id: string, at: ISODateTime): Promise<void> {
+    await this.db
+      .update(webSessions)
+      .set({ revokedAt: at })
+      .where(and(eq(webSessions.id, id), isNull(webSessions.revokedAt)));
+  }
+
+  async createSetupCode(c: SetupCodeRecord): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(setupCodes)
+        .set({ revokedAt: c.createdAt })
+        .where(and(eq(setupCodes.memberId, c.memberId), isNull(setupCodes.usedAt), isNull(setupCodes.revokedAt)));
+      await tx.insert(setupCodes).values({
+        id: c.id,
+        memberId: c.memberId,
+        householdId: c.householdId,
+        codeHash: c.codeHash,
+        createdBy: c.createdBy ?? null,
+        createdAt: c.createdAt,
+        expiresAt: c.expiresAt,
+      });
+    });
+  }
+
+  async findSetupCode(codeHash: string): Promise<SetupCodeRecord | undefined> {
+    const [r] = await this.db.select().from(setupCodes).where(eq(setupCodes.codeHash, codeHash));
+    if (!r) return undefined;
+    return {
+      id: r.id,
+      memberId: r.memberId,
+      householdId: r.householdId,
+      codeHash: r.codeHash,
+      ...(r.createdBy !== null ? { createdBy: r.createdBy } : {}),
+      createdAt: iso(r.createdAt)!,
+      expiresAt: iso(r.expiresAt)!,
+      ...(r.usedAt !== null ? { usedAt: iso(r.usedAt)! } : {}),
+      ...(r.revokedAt !== null ? { revokedAt: iso(r.revokedAt)! } : {}),
+    };
+  }
+
+  async consumeSetupCode(id: string, at: ISODateTime): Promise<boolean> {
+    const rows = await this.db
+      .update(setupCodes)
+      .set({ usedAt: at })
+      .where(and(eq(setupCodes.id, id), isNull(setupCodes.usedAt), isNull(setupCodes.revokedAt)))
+      .returning({ id: setupCodes.id });
+    return rows.length === 1;
+  }
+
+  async getPin(memberId: string): Promise<PinRecord | undefined> {
+    const [r] = await this.db.select().from(memberPins).where(eq(memberPins.memberId, memberId));
+    if (!r) return undefined;
+    return {
+      memberId: r.memberId,
+      hash: r.hash,
+      setAt: iso(r.setAt)!,
+      failures: r.failures,
+      consecutive: r.consecutive,
+      ...(r.lockedUntil !== null ? { lockedUntil: iso(r.lockedUntil)! } : {}),
+      ...(r.hardLockedAt !== null ? { hardLockedAt: iso(r.hardLockedAt)! } : {}),
+    };
+  }
+
+  async savePin(p: PinRecord): Promise<void> {
+    const values = {
+      memberId: p.memberId,
+      hash: p.hash,
+      setAt: p.setAt,
+      failures: p.failures,
+      consecutive: p.consecutive,
+      lockedUntil: p.lockedUntil ?? null,
+      hardLockedAt: p.hardLockedAt ?? null,
+    };
+    await this.db.insert(memberPins).values(values).onConflictDoUpdate({ target: memberPins.memberId, set: values });
+  }
+
+  async recordSecurityEvent(e: SecurityEvent): Promise<void> {
+    await this.db.insert(securityEvents).values({
+      id: e.id,
+      householdId: e.householdId,
+      memberId: e.memberId,
+      kind: e.kind,
+      at: e.at,
+      detail: e.detail ?? null,
+    });
+  }
+
+  async saveRejection(r: QuoteRejection): Promise<void> {
+    await this.db.insert(quoteRejections).values(r);
+  }
+
+  async loadGateActivity(householdId: string, since: ISODateTime): Promise<GateActivity> {
+    const rows = await this.db
+      .select()
+      .from(policyDecisions)
+      .where(and(eq(policyDecisions.householdId, householdId), gte(policyDecisions.evaluatedAt, since)));
+    const decisions = rows
+      .filter((r) => r.memberId !== null && r.placeId !== null)
+      .map((r) => ({
+        quoteHash: r.quoteHash,
+        memberId: r.memberId!,
+        placeId: r.placeId!,
+        decision: { verdict: r.verdict, reasons: r.reasons, evaluatedAt: iso(r.evaluatedAt)! },
+      }));
+    const hashes = [...new Set(decisions.map((d) => d.quoteHash))];
+    if (hashes.length === 0) return { decisions, quotes: [], placed: [], rejections: [] };
+    const [qs, placed, rejected] = await Promise.all([
+      this.db
+        .select({ quote: quotes.quote })
+        .from(quotes)
+        .where(and(eq(quotes.householdId, householdId), inArray(quotes.hash, hashes))),
+      this.db
+        .select({ quoteHash: ledgerOrders.quoteHash, placedAt: ledgerOrders.placedAt })
+        .from(ledgerOrders)
+        .where(
+          and(
+            eq(ledgerOrders.householdId, householdId),
+            inArray(ledgerOrders.quoteHash, hashes),
+            notInArray(ledgerOrders.status, ['failed', 'cancelled']),
+          ),
+        ),
+      this.db
+        .select({ quoteHash: quoteRejections.quoteHash, rejectedAt: quoteRejections.rejectedAt })
+        .from(quoteRejections)
+        .where(and(eq(quoteRejections.householdId, householdId), inArray(quoteRejections.quoteHash, hashes))),
+    ]);
+    return {
+      decisions,
+      quotes: qs.map((q) => q.quote),
+      placed: placed.map((p) => ({ quoteHash: p.quoteHash!, placedAt: iso(p.placedAt)! })),
+      rejections: rejected.map((r) => ({ quoteHash: r.quoteHash, rejectedAt: iso(r.rejectedAt)! })),
+    };
   }
 }

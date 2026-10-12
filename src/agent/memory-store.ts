@@ -2,6 +2,15 @@
  * In-memory Store: the reference implementation for tests and for running the API without Postgres.
  * Its recorder mirrors DbDecisionRecorder: appends decisions, appends ledger rows, consumes the approval used.
  */
+import type {
+  GateActivity,
+  PasskeyRecord,
+  PinRecord,
+  QuoteRejection,
+  SecurityEvent,
+  SetupCodeRecord,
+  WebSessionRecord,
+} from '../auth/types.js';
 import { BazaarError } from '../core/errors.js';
 import { lineHash } from '../core/hash.js';
 import type {
@@ -9,6 +18,7 @@ import type {
   Household,
   ISODateTime,
   LedgerOrderInput,
+  Member,
   Place,
   Quote,
   Serviceability,
@@ -33,6 +43,12 @@ export class MemoryStore implements Store {
   private readonly spend: (SpendRow & { householdId: string })[] = [];
   /** sha256(member token) → member; only hashes are kept, as in the member_credentials table. */
   readonly credentials = new Map<string, { householdId: string; memberId: string; revokedAt?: ISODateTime }>();
+  readonly passkeys = new Map<string, PasskeyRecord>();
+  readonly sessions = new Map<string, WebSessionRecord>();
+  readonly setupCodes = new Map<string, SetupCodeRecord>();
+  readonly pins = new Map<string, PinRecord>();
+  readonly securityEvents: SecurityEvent[] = [];
+  readonly rejections: QuoteRejection[] = [];
 
   constructor(households: Household[] = []) {
     for (const h of households) this.households.set(h.id, structuredClone(h));
@@ -78,6 +94,7 @@ export class MemoryStore implements Store {
         status: r.order.status,
         quoteHash: r.quote.hash,
         decision: r.decision,
+        memberId: r.memberId,
       });
       this.spend.push({
         householdId: r.householdId,
@@ -222,5 +239,142 @@ export class MemoryStore implements Store {
     return this.orders
       .filter((o) => o.householdId === householdId && (since === undefined || o.placedAt >= since))
       .map(({ householdId: _h, ...o }) => o);
+  }
+
+  // ---------- identity (auth/types.ts IdentityStore) ----------
+
+  private householdOfMember(memberId: string): Household | undefined {
+    return [...this.households.values()].find((x) => x.members.some((m) => m.id === memberId));
+  }
+
+  async saveMember(member: Member): Promise<void> {
+    const h = this.households.get(member.householdId);
+    if (!h) throw new BazaarError('NOT_FOUND', `household ${member.householdId} not found`);
+    for (const other of h.members) {
+      if (other.id === member.id) continue;
+      const clash = member.phones.find((p) => other.phones.includes(p));
+      if (clash) throw new BazaarError('PHONE_TAKEN', `${clash} already belongs to another member`);
+    }
+    const copy = structuredClone(member);
+    const i = h.members.findIndex((m) => m.id === member.id);
+    if (i >= 0) h.members[i] = copy;
+    else h.members.push(copy);
+  }
+
+  async listPasskeys(memberId: string): Promise<PasskeyRecord[]> {
+    return [...this.passkeys.values()].filter((p) => p.memberId === memberId).map((p) => structuredClone(p));
+  }
+
+  async findPasskey(credentialId: string): Promise<PasskeyRecord | undefined> {
+    const p = this.passkeys.get(credentialId);
+    return p ? structuredClone(p) : undefined;
+  }
+
+  async savePasskey(passkey: PasskeyRecord): Promise<void> {
+    if (this.passkeys.has(passkey.id)) throw new BazaarError('PASSKEY_EXISTS', 'credential already registered');
+    this.passkeys.set(passkey.id, structuredClone(passkey));
+  }
+
+  async updatePasskeyCounter(credentialId: string, counter: number, at: ISODateTime): Promise<void> {
+    const p = this.passkeys.get(credentialId);
+    if (p) {
+      p.counter = counter;
+      p.lastUsedAt = at;
+    }
+  }
+
+  async passkeyMemberIds(householdId: string): Promise<string[]> {
+    const h = this.households.get(householdId);
+    if (!h) return [];
+    const ids = new Set([...this.passkeys.values()].map((p) => p.memberId));
+    return h.members.filter((m) => ids.has(m.id)).map((m) => m.id);
+  }
+
+  async createSession(session: WebSessionRecord): Promise<void> {
+    this.sessions.set(session.tokenHash, structuredClone(session));
+  }
+
+  async findSessionByTokenHash(tokenHash: string): Promise<WebSessionRecord | undefined> {
+    const s = this.sessions.get(tokenHash);
+    if (!s || !this.householdOfMember(s.memberId)) return undefined;
+    return structuredClone(s);
+  }
+
+  async touchSession(id: string, lastSeenAt: ISODateTime, expiresAt: ISODateTime): Promise<void> {
+    for (const s of this.sessions.values())
+      if (s.id === id) {
+        s.lastSeenAt = lastSeenAt;
+        s.expiresAt = expiresAt;
+      }
+  }
+
+  async revokeSession(id: string, at: ISODateTime): Promise<void> {
+    for (const s of this.sessions.values()) if (s.id === id && s.revokedAt === undefined) s.revokedAt = at;
+  }
+
+  async createSetupCode(code: SetupCodeRecord): Promise<void> {
+    for (const c of this.setupCodes.values())
+      if (c.memberId === code.memberId && c.usedAt === undefined && c.revokedAt === undefined)
+        c.revokedAt = code.createdAt;
+    this.setupCodes.set(code.codeHash, structuredClone(code));
+  }
+
+  async findSetupCode(codeHash: string): Promise<SetupCodeRecord | undefined> {
+    const c = this.setupCodes.get(codeHash);
+    return c ? structuredClone(c) : undefined;
+  }
+
+  async consumeSetupCode(id: string, at: ISODateTime): Promise<boolean> {
+    for (const c of this.setupCodes.values()) {
+      if (c.id !== id) continue;
+      if (c.usedAt !== undefined || c.revokedAt !== undefined) return false;
+      c.usedAt = at;
+      return true;
+    }
+    return false;
+  }
+
+  async getPin(memberId: string): Promise<PinRecord | undefined> {
+    const p = this.pins.get(memberId);
+    return p ? structuredClone(p) : undefined;
+  }
+
+  async savePin(pin: PinRecord): Promise<void> {
+    this.pins.set(pin.memberId, structuredClone(pin));
+  }
+
+  async recordSecurityEvent(event: SecurityEvent): Promise<void> {
+    this.securityEvents.push(structuredClone(event));
+  }
+
+  async saveRejection(rejection: QuoteRejection): Promise<void> {
+    this.rejections.push(structuredClone(rejection));
+  }
+
+  async loadGateActivity(householdId: string, since: ISODateTime): Promise<GateActivity> {
+    const decisions = this.decisions
+      .filter((d) => d.householdId === householdId && d.evaluatedAt >= since)
+      .map((d) => ({
+        quoteHash: d.quote.hash,
+        memberId: d.memberId,
+        placeId: d.placeId,
+        decision: {
+          verdict: d.decision.verdict,
+          reasons: structuredClone(d.decision.reasons),
+          evaluatedAt: d.decision.evaluatedAt,
+        },
+      }));
+    const hashes = new Set(decisions.map((d) => d.quoteHash));
+    const quotes = [...hashes]
+      .map((h) => this.quotes.get(h))
+      .filter((q): q is { householdId: string; quote: Quote } => q !== undefined && q.householdId === householdId)
+      .map((q) => structuredClone(q.quote));
+    const placed = this.placed
+      .filter((p) => p.householdId === householdId && hashes.has(p.quote.hash) && countsAsSpend(p.order))
+      .map((p) => ({ quoteHash: p.quote.hash, placedAt: p.order.placedAt }));
+    const rejections = this.rejections
+      .filter((r) => r.householdId === householdId && hashes.has(r.quoteHash))
+      .map((r) => ({ quoteHash: r.quoteHash, rejectedAt: r.rejectedAt }));
+    return { decisions, quotes, placed, rejections };
   }
 }

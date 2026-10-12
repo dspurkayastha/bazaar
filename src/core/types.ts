@@ -18,6 +18,8 @@ export interface Member {
   role: MemberRole;
   /** e.g. WhatsApp number in E.164, Siri device id. `trusted` (owner channels only): see PolicyContext.webhook */
   channels: { kind: 'whatsapp' | 'siri' | 'web'; address: string; trusted?: boolean }[];
+  /** Phone numbers in E.164 (caller ID on calls). Unique across the household; may be empty. */
+  phones: string[];
   /** For dependants: the place their orders go to by default */
   defaultPlaceId?: string;
 }
@@ -35,6 +37,8 @@ export interface Serviceability {
 export interface Place {
   id: string;
   householdId: string;
+  /** Stable slug, unique in the household (e.g. "home", "rahuls"); derived from the first nickname. */
+  key: string;
   /** Primary spoken name, e.g. "home" */
   nickname: string;
   aliases: string[]; // "the hospital", "SCC", "work"
@@ -275,6 +279,8 @@ export interface LedgerOrderInput {
   placedAt: ISODateTime;
   placeId?: string;
   supplierAddressId?: string;
+  /** The member whose request placed it (Bazaar-placed orders); absent for orders placed outside Bazaar. */
+  memberId?: string;
   lines: { name: string; variantId?: string; quantity: number; unitPrice: Paise; lineTotal: Paise; category?: ItemCategory; addedBy?: string; itemKey?: string }[];
   fees: { label: string; amount: Paise }[];
   total: Paise;

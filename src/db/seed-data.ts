@@ -158,6 +158,7 @@ export function foundingHousehold(id: (prefix: string) => string = newId): House
         role: 'owner',
         // placeholder number; trusted: Dev's own WhatsApp may pay within the unattended limits via the webhook
         channels: [{ kind: 'whatsapp', address: '+910000000001', trusted: true }],
+        phones: [], // added by the owner from the web app (Household → Members)
       },
       {
         id: id('mem'),
@@ -165,12 +166,14 @@ export function foundingHousehold(id: (prefix: string) => string = newId): House
         name: 'Partner',
         role: 'adder',
         channels: [{ kind: 'whatsapp', address: '+910000000002' }], // placeholder
+        phones: [],
       },
     ],
     places: [
       {
         id: id('pl'),
         householdId,
+        key: 'home',
         nickname: 'home',
         aliases: ['house', 'ambicapatty'],
         canonicalAddress: 'Home, Ambicapatty, Silchar',
@@ -183,6 +186,7 @@ export function foundingHousehold(id: (prefix: string) => string = newId): House
       {
         id: id('pl'),
         householdId,
+        key: 'hospital',
         nickname: 'hospital',
         aliases: ['work', 'SCC', 'cancer centre'],
         canonicalAddress: 'Work, Silchar Cancer Centre (SCC), Silchar',
@@ -195,6 +199,7 @@ export function foundingHousehold(id: (prefix: string) => string = newId): House
       {
         id: id('pl'),
         householdId,
+        key: 'rahuls',
         nickname: "rahul's",
         aliases: [],
         canonicalAddress: "Rahul's House, Silchar",
@@ -207,6 +212,7 @@ export function foundingHousehold(id: (prefix: string) => string = newId): House
       {
         id: id('pl'),
         householdId,
+        key: 'didis',
         nickname: "didi's",
         aliases: ['didiya', 'kolkata'],
         canonicalAddress: 'Didiya, Kolkata',

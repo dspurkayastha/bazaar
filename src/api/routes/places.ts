@@ -7,6 +7,7 @@
  * default. All three act on the caller's household (from the token); body `memberId` / `householdId` are ignored.
  */
 import type { FastifyInstance } from 'fastify';
+import { uniqueKey } from '../../core/identity.js';
 import { newId } from '../../core/ids.js';
 import type { Household, Place, SupplierId } from '../../core/types.js';
 import { memberOf, type AuthedMember } from '../auth.js';
@@ -57,6 +58,7 @@ export function registerPlaceRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const place: Place = {
       id: newId('pl'),
       householdId: household.id,
+      key: uniqueKey(nickname, household.places.map((p) => p.key)),
       nickname,
       aliases: optStringArray(o, 'aliases') ?? [],
       canonicalAddress: reqString(o, 'canonicalAddress', 500),

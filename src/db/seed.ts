@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm';
 import { hashMemberToken, newMemberToken } from '../core/credentials.js';
 import { newId } from '../core/ids.js';
 import { createDb } from './client.js';
-import { households, itemDefaults, memberCredentials, members, places, profiles } from './schema.js';
+import { households, itemDefaults, memberCredentials, memberPhones, members, places, profiles } from './schema.js';
 import { foundingHousehold } from './seed-data.js';
 
 const h = foundingHousehold();
@@ -21,7 +21,13 @@ try {
     const tokens = h.members.map((m) => ({ member: m, token: newMemberToken() }));
     await db.transaction(async (tx) => {
       await tx.insert(households).values({ id: h.id, name: h.name, policy: h.policy });
-      await tx.insert(members).values(h.members.map((m) => ({ ...m, defaultPlaceId: m.defaultPlaceId ?? null })));
+      await tx
+        .insert(members)
+        .values(h.members.map(({ phones: _p, ...m }) => ({ ...m, defaultPlaceId: m.defaultPlaceId ?? null })));
+      const phones = h.members.flatMap((m) =>
+        m.phones.map((phone, position) => ({ householdId: h.id, phone, memberId: m.id, position })),
+      );
+      if (phones.length > 0) await tx.insert(memberPhones).values(phones);
       await tx.insert(memberCredentials).values(
         tokens.map(({ member, token }) => ({
           id: newId('mc'),
