@@ -13,7 +13,7 @@ Requires Node 22 and pnpm.
 ```sh
 pnpm install
 cp .env.example .env          # fill in keys
-docker compose up -d          # Postgres 16 on localhost:5433
+docker compose up -d          # Postgres 16 on 127.0.0.1:${BAZAAR_PG_PORT:-5433}
 pnpm db:migrate               # apply drizzle/ migrations
 pnpm db:seed                  # founding household
 pnpm test                     # vitest, no network, no database

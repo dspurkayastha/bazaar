@@ -26,10 +26,21 @@ if [ ! -f .env ]; then
   sed -i "s|^BAZAAR_API_TOKEN=.*|BAZAAR_API_TOKEN=$(gen 32)|" .env
   sed -i "s|^TOKEN_ENC_KEY=.*|TOKEN_ENC_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")|" .env
   sed -i "s|^WHATSAPP_WEBHOOK_SECRET=.*|WHATSAPP_WEBHOOK_SECRET=$(gen 32)|" .env
-  sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgres://bazaar:bazaar@127.0.0.1:5433/bazaar|" .env
   sed -i "s|^BAZAAR_SUPPLIERS=.*|BAZAAR_SUPPLIERS=instamart|" .env
   echo "   wrote .env with fresh secrets. ANTHROPIC_API_KEY still needs to be set."
 fi
+# Postgres host port: keep an existing choice, otherwise take the first free port from 5433
+if ! grep -q '^BAZAAR_PG_PORT=' .env; then
+  PG_PORT=""
+  for p in $(seq 5433 5460); do
+    if ! ss -ltnH "sport = :$p" | grep -q .; then PG_PORT=$p; break; fi
+  done
+  [ -n "$PG_PORT" ] || { echo "no free port in 5433-5460"; exit 1; }
+  echo "BAZAAR_PG_PORT=$PG_PORT" >> .env
+  echo "   Postgres will listen on 127.0.0.1:$PG_PORT"
+fi
+PG_PORT=$(grep '^BAZAAR_PG_PORT=' .env | cut -d= -f2)
+sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgres://bazaar:bazaar@127.0.0.1:$PG_PORT/bazaar|" .env
 grep -q '^ANTHROPIC_API_KEY=sk-' .env || echo "   !! ANTHROPIC_API_KEY not set in .env"
 
 echo "== deps + build"

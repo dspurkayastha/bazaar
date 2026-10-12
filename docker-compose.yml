@@ -7,7 +7,8 @@ services:
       POSTGRES_PASSWORD: bazaar
       POSTGRES_DB: bazaar
     ports:
-      - '5433:5432'
+      # localhost only; never expose Postgres on a public interface
+      - '127.0.0.1:${BAZAAR_PG_PORT:-5433}:5432'
     volumes:
       - bazaar-pg:/var/lib/postgresql/data
     healthcheck:
