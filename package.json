@@ -21,8 +21,10 @@
     "db:seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.4",
+    "fastify": "^5.12.5",
     "postgres": "3.4.9",
     "ulid": "3.0.2"
   },
