@@ -315,3 +315,38 @@ describe('voice config', () => {
     expect(voiceLang(undefined, 'hi-IN')).toBe('hi-IN');
   });
 });
+
+describe('voice CLI helpers', () => {
+  it('parses positional args, flags and -o', async () => {
+    const { parseArgs } = await import('../src/voice/cli.js');
+    const a = parseArgs(['আমি দুধ চাই', '--lang', 'bn-IN', '--model=bulbul:v4-flash', '-o', 'x.mp3', '--fast']);
+    expect(a.positional).toEqual(['আমি দুধ চাই']);
+    expect(Object.fromEntries(a.flags)).toEqual({ lang: 'bn-IN', model: 'bulbul:v4-flash', out: 'x.mp3', fast: true });
+  });
+
+  it('reads 16 kHz mono s16 WAV without ffmpeg and refuses anything else', async () => {
+    const { pcmFromWav } = await import('../src/voice/cli.js');
+    const wav = (rate: number, channels: number, data: Buffer) => {
+      const h = Buffer.alloc(44);
+      h.write('RIFF', 0, 'ascii');
+      h.writeUInt32LE(36 + data.length, 4);
+      h.write('WAVE', 8, 'ascii');
+      h.write('fmt ', 12, 'ascii');
+      h.writeUInt32LE(16, 16);
+      h.writeUInt16LE(1, 20);
+      h.writeUInt16LE(channels, 22);
+      h.writeUInt32LE(rate, 24);
+      h.writeUInt32LE(rate * channels * 2, 28);
+      h.writeUInt16LE(channels * 2, 32);
+      h.writeUInt16LE(16, 34);
+      h.write('data', 36, 'ascii');
+      h.writeUInt32LE(data.length, 40);
+      return Buffer.concat([h, data]);
+    };
+    const pcm = Buffer.from([1, 0, 2, 0]);
+    expect(pcmFromWav(wav(16000, 1, pcm))).toEqual(pcm);
+    expect(pcmFromWav(wav(44100, 1, pcm))).toBeUndefined();
+    expect(pcmFromWav(wav(16000, 2, pcm))).toBeUndefined();
+    expect(pcmFromWav(Buffer.from('not a wav file at all, no header here........'))).toBeUndefined();
+  });
+});

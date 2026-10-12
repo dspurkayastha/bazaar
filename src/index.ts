@@ -7,6 +7,7 @@
  *   DATABASE_URL       Postgres (needs BAZAAR_HOUSEHOLD_ID); unset = in-memory store seeded with the founding household
  *   BAZAAR_SUPPLIERS   comma list of supplier ids, default "stub"; e.g. "instamart" (needs TOKEN_ENC_KEY + pnpm auth:instamart)
  *   PORT / HOST        default 8787 / 127.0.0.1
+ *   SARVAM_API_KEY     enables /voice (docs/VOICE_PROTOCOL.md); SARVAM_* and VOICE_APPROVAL_MAX_RUPEES tune it
  */
 import 'dotenv/config';
 import { MemoryStore } from './agent/memory-store.js';
@@ -19,6 +20,7 @@ import { createDb } from './db/client.js';
 import { foundingHousehold } from './db/seed-data.js';
 import { DbStore } from './db/store.js';
 import { getSupplier, type RegistryId } from './suppliers/registry.js';
+import { voiceConfigFromEnv } from './voice/config.js';
 
 async function loadSuppliers(): Promise<Supplier[]> {
   const ids = (process.env.BAZAAR_SUPPLIERS ?? 'stub')
@@ -56,6 +58,9 @@ async function main(): Promise<void> {
   const webhookSecret = process.env.WHATSAPP_WEBHOOK_SECRET ?? '';
   if (!webhookSecret) console.warn('WHATSAPP_WEBHOOK_SECRET not set: /webhooks/whatsapp will refuse every request.');
 
+  const voice = voiceConfigFromEnv();
+  if (!voice.sarvam) console.warn('SARVAM_API_KEY not set: /voice will answer voice_unconfigured and close.');
+
   const app = buildServer(
     {
       store,
@@ -64,6 +69,7 @@ async function main(): Promise<void> {
       apiToken,
       ...(webhookSecret ? { webhookSecret } : {}),
       defaultHouseholdId,
+      voice: { config: voice },
     },
     { logger: true },
   );
