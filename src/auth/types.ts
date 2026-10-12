@@ -67,12 +67,7 @@ export interface PinRecord {
 }
 
 export type SecurityEventKind =
-  | 'pin_set'
-  | 'pin_reset'
-  | 'pin_locked'
-  | 'pin_hard_locked'
-  | 'passkey_registered'
-  | 'setup_link_created';
+  'pin_set' | 'pin_reset' | 'pin_locked' | 'pin_hard_locked' | 'passkey_registered' | 'setup_link_created';
 
 /** Append-only audit line (the "event recorded in the ledger" of WEB_API.md). Never carries PIN material. */
 export interface SecurityEvent {

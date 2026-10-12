@@ -146,8 +146,8 @@ export function buildSystemPrompt(
 export interface VoicePromptOptions extends PromptOptions {
   /** The language Bazaar answers in this turn (STT's dominant language for the user's last turn). */
   lang: string;
-  /** Spoken approvals are allowed up to this total (paise). */
-  voiceApprovalMax: number;
+  /** Spoken approvals are allowed up to this total (paise); above it the owner's PIN is needed. */
+  pinThreshold: number;
 }
 
 /**
@@ -177,8 +177,8 @@ export function buildVoiceSystemPrompt(
     '- There is no ask_user tool in voice mode: if you must ask something, ask it in one short spoken sentence and wait for the next turn.',
     '- After propose_checkout, follow its `voice.next` instruction exactly:',
     '  - PLACED: say it is ordered, the total, and the delivery time if known.',
-    `  - HOLD that the owner can confirm by voice (total up to ${formatINR(opts.voiceApprovalMax)}): END your reply by saying the total and asking whether to place the order ("এগারোশো তেইশ টাকা। অর্ডার করে দিই?").`,
-    '  - HOLD above the voice limit: say the total and ask them to approve with Face ID on the phone.',
+    `  - HOLD that the owner can confirm by voice (total up to ${formatINR(opts.pinThreshold)}): END your reply by saying the total and asking whether to place the order ("এগারোশো তেইশ টাকা। অর্ডার করে দিই?").`,
+    '  - HOLD above that: say the total and ask them to approve it with their PIN (on screen, or on the phone keypad). Never ask them to say the PIN aloud.',
     '  - HOLD for a member who is not an owner: say the total and that an owner will approve it. Their "yes" never pays.',
     '  - BLOCK: say plainly what was blocked and that it cannot be approved by voice.',
     '- If, in the turn right after you asked for confirmation, the user clearly says yes ("yes", "haan", "hyan", "order it", "kore dao"), call confirm_pending_order with that quoteHash. Call it for nothing else. If they change the cart instead, rebuild and propose again. The server decides whether the yes counts; follow its `say` hint when it refuses.',

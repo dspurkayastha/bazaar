@@ -1,17 +1,41 @@
 /** Small HTTP helpers shared by the routes: typed errors and body validation. No framework magic. */
 import type { AgentDeps } from '../agent/loop.js';
+import { pinServiceFor, type PinService } from '../auth/pin.js';
+import { rupees } from '../core/money.js';
+import type { Paise } from '../core/types.js';
 import type { VoiceOptions } from '../voice/route.js';
+import { DEFAULT_PIN_REQUIRED_ABOVE_RUPEES, type WebConfig } from './web-config.js';
 
+/**
+ * An error answered as JSON. /api/* routes answer `{error:{code, message}, ...extra}` (docs/WEB_API.md); the v1
+ * routes keep `{error: message}`.
+ */
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly code: string = defaultCode(status),
+    readonly extra?: Record<string, unknown>,
   ) {
     super(message);
   }
 }
 
+function defaultCode(status: number): string {
+  return (
+    { 400: 'bad_request', 401: 'unauthorised', 403: 'forbidden', 404: 'not_found', 409: 'conflict', 423: 'locked' }[
+      status
+    ] ?? 'error'
+  );
+}
+
 export interface ApiDeps extends AgentDeps {
+  /** Web app: origin, passkey RP id, built assets. Absent → defaults for http://localhost (tests, local dev). */
+  web?: WebConfig;
+  /** PIN_REQUIRED_ABOVE_RUPEES in paise (default ₹500): approvals above this need the owner's PIN. */
+  pinRequiredAbovePaise?: Paise;
+  /** PIN checks (default: one shared PinService per store). */
+  pins?: PinService;
   /** Household-level read token (BAZAAR_API_TOKEN): /ledger/summary only. Members use their own tokens. */
   apiToken: string;
   /** WHATSAPP_WEBHOOK_SECRET: HMAC-SHA256 key for x-bazaar-signature. Unset → the webhook refuses everything (503). */
@@ -62,6 +86,19 @@ export function optStringArray(o: Json, key: string): string[] | undefined {
     throw new ApiError(400, `${key} must be an array of non-empty strings`);
   }
   return (v as string[]).map((x) => x.trim());
+}
+
+/** PIN_REQUIRED_ABOVE_RUPEES in paise for these deps. */
+export function pinThreshold(deps: Pick<ApiDeps, 'pinRequiredAbovePaise'>): Paise {
+  return deps.pinRequiredAbovePaise ?? rupees(DEFAULT_PIN_REQUIRED_ABOVE_RUPEES);
+}
+
+export function pinsOf(deps: Pick<ApiDeps, 'pins' | 'store' | 'now'>): PinService {
+  return deps.pins ?? pinServiceFor(deps.store, deps.now);
+}
+
+export function webOf(deps: Pick<ApiDeps, 'web'>): WebConfig {
+  return deps.web ?? { origin: 'http://localhost:8787', rpId: 'localhost', rpName: 'Bazaar' };
 }
 
 export function householdIdOf(deps: ApiDeps, query: unknown): string {

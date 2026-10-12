@@ -14,7 +14,7 @@ import type { Household } from '../src/core/types.js';
 import { StubSupplier } from '../src/suppliers/stub/index.js';
 import { NOW, adder, household, owner } from './fixtures/context.js';
 import { ScriptedLlm, asked, say, searchFor, use, type Step } from './fixtures/llm.js';
-import { WEBHOOK_SECRET, memberAuth, signed } from './fixtures/api.js';
+import { PIN, WEBHOOK_SECRET, memberAuth, setPin, signed } from './fixtures/api.js';
 
 const TOKEN = 'test-token';
 let auth: Record<string, string>; // the owner's own member token
@@ -54,6 +54,7 @@ beforeEach(async () => {
   store = new MemoryStore([h]);
   supplier = new StubSupplier({ now: () => NOW });
   auth = await memberAuth(store, owner(h));
+  await setPin(store, owner(h));
   adderAuth = await memberAuth(store, adder(h));
 });
 afterEach(async () => {
@@ -66,7 +67,9 @@ describe('attempt 4: POST /approve', () => {
     const hash = (await post('/request', { memberId: owner(h).id, text: 'biryani' })).json().chosen.hash as string;
     // The adder's own token is refused, even when the body names the owner.
     expect((await post('/approve', { quoteHash: hash }, adderAuth)).statusCode).toBe(403);
-    expect((await post('/approve', { quoteHash: hash, memberId: owner(h).id }, adderAuth)).statusCode).toBe(403);
+    expect((await post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN }, adderAuth)).statusCode).toBe(
+      403,
+    );
     // Unknown, revoked or household-level credentials never reach the route.
     const nobody = { authorization: `Bearer mtk_${'A'.repeat(43)}` };
     expect((await post('/approve', { quoteHash: hash, memberId: 'mem_nobody' }, nobody)).statusCode).toBe(401);
@@ -87,8 +90,8 @@ describe('attempt 4: POST /approve', () => {
   it('4b approve twice → one order; approve, cart changes, approve again → BLOCK', async () => {
     start(flow(cart1123));
     const hash = (await post('/request', { memberId: owner(h).id, text: 'biryani' })).json().chosen.hash as string;
-    expect((await post('/approve', { quoteHash: hash, memberId: owner(h).id })).json().placed).toBe(true);
-    const again = (await post('/approve', { quoteHash: hash, memberId: owner(h).id })).json();
+    expect((await post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN })).json().placed).toBe(true);
+    const again = (await post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN })).json();
     expect(again.placed).toBe(false);
     expect(supplier.placeCalls).toBe(1);
   });
@@ -97,9 +100,9 @@ describe('attempt 4: POST /approve', () => {
     start(flow(cart1123));
     const hash = (await post('/request', { memberId: owner(h).id, text: 'biryani' })).json().chosen.hash as string;
     supplier.addOutsideSession('v-chicken', 3);
-    const a1 = (await post('/approve', { quoteHash: hash, memberId: owner(h).id })).json();
+    const a1 = (await post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN })).json();
     expect(a1.decision.verdict).toBe('BLOCK');
-    const a2 = (await post('/approve', { quoteHash: hash, memberId: owner(h).id })).json();
+    const a2 = (await post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN })).json();
     expect(a2.decision.verdict).toBe('BLOCK');
     expect(supplier.placeCalls).toBe(0);
   });
@@ -108,8 +111,8 @@ describe('attempt 4: POST /approve', () => {
     start(flow(cart1123));
     const hash = (await post('/request', { memberId: owner(h).id, text: 'biryani' })).json().chosen.hash as string;
     const rs = await Promise.all([
-      post('/approve', { quoteHash: hash, memberId: owner(h).id }),
-      post('/approve', { quoteHash: hash, memberId: owner(h).id }),
+      post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN }),
+      post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN }),
     ]);
     expect(supplier.placed).toHaveLength(1);
     expect(rs.map((r) => r.statusCode)).toEqual([200, 200]);

@@ -8,7 +8,10 @@ import { FILLERS, FillerCache } from '../src/voice/fillers.js';
 import { NOW, adder, household, owner } from './fixtures/context.js';
 import { asked, say, use, type Step } from './fixtures/llm.js';
 import { sleep, until } from './fixtures/sarvam.js';
-import { StreamingLlm, VoiceClient, startVoice, type VoiceHarness } from './fixtures/voice.js';
+import { FakeKeypad, StreamingLlm, VoiceClient, startVoice, type VoiceHarness } from './fixtures/voice.js';
+import { PIN, setPin } from './fixtures/api.js';
+import { SessionService } from '../src/auth/session.js';
+import WebSocket from 'ws';
 
 let h: Household;
 let store: MemoryStore;
@@ -106,7 +109,7 @@ describe('/voice transport and auth', () => {
     expect(ready).toMatchObject({ member: { name: owner(h).name, role: 'owner' } });
     expect(typeof ready.sessionId).toBe('string');
     const place = h.places.find((p) => p.nickname === 'hospital' || p.aliases.includes('hospital'))!;
-    expect(ready.place).toEqual({ key: place.id, nickname: place.nickname });
+    expect(ready.place).toEqual({ key: place.key, nickname: place.nickname });
     expect(c.trace().slice(0, 2)).toEqual(['ready', 'state:listening']);
 
     const conn = harness.stt.last;
@@ -168,7 +171,7 @@ describe('/voice turns', () => {
     );
     expect(c.messages('decision')[0]).toMatchObject({
       verdict: 'HOLD',
-      needsBiometric: false,
+      needsPin: false,
       spokenConfirmation: true,
       quoteHash: cart.quote.hash,
     });
@@ -415,35 +418,99 @@ describe('/voice approvals', () => {
     expect(decisions.at(-1)).toMatchObject({ verdict: 'PAY', spokenConfirmation: true });
   });
 
-  it('over the voice limit: needsBiometric, then Face ID `approve` places via the gate', async () => {
-    const { harness } = await start(held, { config: { approvalMaxPaise: 100_000 } });
+  it('above the PIN threshold (default ₹500): needsPin, a spoken yes never pays, the keypad PIN places via the gate', async () => {
+    await setPin(store, owner(h));
+    const keypad = new FakeKeypad();
+    const steps: Step[] = [
+      ...held,
+      (req) => [use('confirm_pending_order', { quoteHash: hashFrom(req) })],
+      [say('PIN diye approve korun.')],
+    ];
+    const { harness, llm } = await start(steps, { pinRequiredAbovePaise: 50_000, keypadFor: () => keypad });
     const c = await connect();
+    expect(keypad.attached).toBe(1);
     harness.stt.utterance('biryani-r jinish pathao', 'bn-IN');
     const decision = await c.waitFor('decision');
-    expect(decision).toMatchObject({ verdict: 'HOLD', needsBiometric: true, spokenConfirmation: false });
+    expect(decision).toMatchObject({ verdict: 'HOLD', needsPin: true, spokenConfirmation: false });
+    expect(decision).not.toHaveProperty('needsBiometric');
     await until(() => c.trace().at(-1) === 'state:listening' && c.messages('audio_end').length >= 1);
-    c.send({ type: 'approve', quoteHash: decision.quoteHash, biometric: true });
+    expect(harness.sessions.get(h.id, owner(h).id, Date.now()).state).toBe('awaiting_pin');
+
+    // The owner says yes: refused (needs_pin), the decision is re-sent, nothing placed.
+    harness.stt.utterance('hyan, order koro', 'bn-IN');
+    await until(() => llm.calls === 6);
+    expect(llm.resultsAt(5)[0]!.body).toMatchObject({ ok: false, refused: 'needs_pin', needsPin: true });
+    await until(() => c.messages('decision').length === 2);
+    expect(supplier.placed).toHaveLength(0);
+    await until(() => c.trace().at(-1) === 'state:listening' && c.messages('audio_end').length >= 2);
+
+    // Wrong PIN on the keypad: refused, still waiting; then the right one places.
+    keypad.type('0000');
+    expect((await c.waitFor('error')).code).toBe('pin_incorrect');
+    expect(supplier.placed).toHaveLength(0);
+    keypad.type(PIN);
     const order = await c.waitFor('order');
     expect(order).toMatchObject({ status: 'placed' });
     expect(supplier.placed).toHaveLength(1);
-    expect(c.messages('decision').at(-1)).toMatchObject({ verdict: 'PAY' });
-    // Spoken confirmation of the Face ID approval.
+    expect(c.messages('decision').at(-1)).toMatchObject({ verdict: 'PAY', needsPin: false });
     await until(() => c.messages('say').some((m) => m.text === 'অর্ডার হয়ে গেছে।'));
+    // The digits never reach the logs.
+    expect(JSON.stringify(harness.logs)).not.toContain(PIN);
+    expect(harness.logs.some((l) => l.event === 'voice_keypad' && l.outcome === 'approved')).toBe(true);
   });
 
-  it('Face ID approve is refused for a hash the server did not ask about, and for an adder', async () => {
-    const { harness } = await start(held, { config: { approvalMaxPaise: 100_000 } });
+  it('keypad digits are ignored when nothing awaits a PIN, after cancel, and for an adder', async () => {
+    await setPin(store, owner(h));
+    const keypads = new Map<string, FakeKeypad>();
+    const keypadFor = (who: { memberId: string }) => {
+      const k = new FakeKeypad();
+      keypads.set(who.memberId, k);
+      return k;
+    };
+    const { harness } = await start(held, { pinRequiredAbovePaise: 50_000, keypadFor });
     const c = await connect();
+    keypads.get(owner(h).id)!.type(PIN); // nothing pending yet
     harness.stt.utterance('pathao', 'bn-IN');
-    const decision = await c.waitFor('decision');
+    await c.waitFor('decision');
+    await until(() => c.trace().at(-1) === 'state:listening' && c.messages('audio_end').length >= 1);
+    c.send({ type: 'cancel' });
+    await sleep(20);
+    keypads.get(owner(h).id)!.type(PIN); // cancelled
+    // an old-style Face ID approve is an unknown message now: ignored
     c.send({ type: 'approve', quoteHash: 'f'.repeat(64), biometric: true });
-    expect((await c.waitFor('error')).code).toBe('approve_refused');
-    c.send({ type: 'approve', quoteHash: decision.quoteHash, biometric: false });
-    await until(() => c.messages('error').length === 2);
+    await sleep(50);
     expect(supplier.placed).toHaveLength(0);
+    expect(harness.logs.filter((l) => l.event === 'voice_keypad').map((l) => l.reason)).toEqual([
+      'nothing_pending',
+      'nothing_pending',
+    ]);
   });
 
-  it('an adder can build a cart by voice but cannot approve it, by voice or Face ID', async () => {
+  it('the web app connects with its session cookie from its own origin only', async () => {
+    const web = { origin: 'https://bazaar.test', rpId: 'bazaar.test' };
+    await start([], { web });
+    const { token } = await new SessionService(store, () => NOW).create(owner(h));
+    const open = (headers: Record<string, string>) => {
+      const c = new VoiceClient(new WebSocket(harness!.url, { headers }));
+      clients.push(c);
+      return c;
+    };
+    const ok = open({ cookie: `bz_session=${token}`, origin: web.origin });
+    await ok.opened;
+    ok.send({ type: 'hello', appVersion: 'web', device: 'Safari', locale: 'en-IN' });
+    expect(await ok.waitFor('ready')).toMatchObject({ member: { name: owner(h).name, role: 'owner' } });
+    for (const headers of <Record<string, string>[]>[
+      { cookie: `bz_session=${token}`, origin: 'https://evil.example' },
+      { cookie: `bz_session=${token}` },
+      { cookie: 'bz_session=bzs_nope', origin: web.origin },
+    ]) {
+      const bad = open(headers);
+      await bad.opened;
+      expect(await bad.waitClosed()).toBe(4401);
+    }
+  });
+
+  it('an adder can build a cart by voice but cannot approve it, by voice or keypad', async () => {
     const steps: Step[] = [
       [use('search_many', { queries: ['milk', 'rice', 'onion'] })],
       [use('build_cart', { lines: cart412 })],
@@ -452,18 +519,21 @@ describe('/voice approvals', () => {
       (req) => [use('confirm_pending_order', { quoteHash: hashFrom(req) })],
       [say('Owner approve korbe.')],
     ];
-    const { harness, llm } = await start(steps);
+    await setPin(store, adder(h)); // even an adder who somehow has a PIN cannot approve
+    const keypad = new FakeKeypad();
+    const { harness, llm } = await start(steps, { keypadFor: () => keypad });
     const c = await connect(adderToken);
     harness.stt.utterance('dudh chal pyaj', 'bn-IN');
     const decision = await c.waitFor('decision');
-    expect(decision).toMatchObject({ verdict: 'HOLD', needsBiometric: false, spokenConfirmation: false });
+    expect(decision).toMatchObject({ verdict: 'HOLD', needsPin: false, spokenConfirmation: false });
     await until(() => c.trace().at(-1) === 'state:listening' && c.messages('audio_end').length >= 1);
     harness.stt.utterance('haan order karo', 'bn-IN');
     await until(() => llm.calls === 6);
     const result = llm.resultsAt(5)[0]!.body;
     expect(result).toMatchObject({ ok: false, refused: 'owner_required' });
-    c.send({ type: 'approve', quoteHash: decision.quoteHash, biometric: true });
-    expect((await c.waitFor('error')).code).toBe('approve_refused');
+    keypad.type(PIN);
+    await until(() => harness.logs.some((l) => l.event === 'voice_keypad'));
+    expect(harness.logs.find((l) => l.event === 'voice_keypad')).toMatchObject({ reason: 'owner_required' });
     expect(supplier.placed).toHaveLength(0);
   });
 

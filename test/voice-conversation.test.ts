@@ -44,11 +44,13 @@ function deps(llm: ScriptedLlm, over: Partial<ConversationDeps> = {}): Conversat
     model: 'test-model',
     apiToken: 'test-token',
     defaultHouseholdId: h.id,
+    // These tests exercise the spoken-yes rules on a ₹1,123 cart, so the PIN threshold is ₹2,000 unless a test
+    // says otherwise; the approval service and the voice rule always share one threshold.
+    pinRequiredAbovePaise: over.pinRequiredAbovePaise ?? 200_000,
   };
   return {
     ...base,
     approve: (hash, who) => approveQuote(base, hash, who),
-    voiceApprovalMaxPaise: 200_000,
     clock: () => clock,
     ...over,
   };
@@ -86,7 +88,7 @@ describe('voice approvals (server-enforced)', () => {
     const s = session();
     ref.p = await holdCart(s, llm, d);
     const p = ref.p;
-    expect(p).toMatchObject({ total: 112300, needsBiometric: false });
+    expect(p).toMatchObject({ total: 112300, needsPin: false });
     clock += 89_000;
     const r = await runConversationTurn(s, 'hyan, order koro', 'bn-IN', d);
     expect(r.outcome).toBe('paid');
@@ -130,23 +132,23 @@ describe('voice approvals (server-enforced)', () => {
     expect(supplier.placed).toHaveLength(0);
   });
 
-  it('over VOICE_APPROVAL_MAX → needsBiometric (decision sent), a spoken yes never approves', async () => {
+  it('over the PIN threshold → needsPin (decision sent), a spoken yes never approves', async () => {
     const ref: { p?: PendingConfirmation } = {};
     const decisions: VoiceDecision[] = [];
-    const llm = new ScriptedLlm([...held, confirmWith(() => ref.p!.quoteHash), [say('Face ID diye approve korun.')]]);
-    const d = deps(llm, { voiceApprovalMaxPaise: 100_000 });
+    const llm = new ScriptedLlm([...held, confirmWith(() => ref.p!.quoteHash), [say('PIN diye approve korun.')]]);
+    const d = deps(llm, { pinRequiredAbovePaise: 100_000 });
     const s = session();
     ref.p = await holdCart(s, llm, d, decisions);
     const p = ref.p;
-    expect(decisions[0]).toMatchObject({ verdict: 'HOLD', needsBiometric: true, spokenConfirmation: false });
-    expect(p.needsBiometric).toBe(true);
+    expect(decisions[0]).toMatchObject({ verdict: 'HOLD', needsPin: true, spokenConfirmation: false });
+    expect(p.needsPin).toBe(true);
     await runConversationTurn(s, 'hyan', 'bn-IN', d, { onDecision: (x) => decisions.push(x) });
-    expect(llm.resultsAt(5)[0]!.body).toMatchObject({ ok: false, needsBiometric: true, refused: 'needs_biometric' });
-    expect(decisions[1]).toMatchObject({ needsBiometric: true, quoteHash: p.quoteHash });
+    expect(llm.resultsAt(5)[0]!.body).toMatchObject({ ok: false, needsPin: true, refused: 'needs_pin' });
+    expect(decisions[1]).toMatchObject({ needsPin: true, quoteHash: p.quoteHash });
     expect(supplier.placed).toHaveLength(0);
   });
 
-  it('the limit is exact paise: total == limit passes, limit - 1 paisa needs biometric', () => {
+  it('the limit is exact paise: total == limit passes, limit - 1 paisa needs the PIN', () => {
     const pending: PendingConfirmation = {
       quoteHash: 'h',
       total: 200_000,
@@ -154,7 +156,7 @@ describe('voice approvals (server-enforced)', () => {
       placeId: 'p',
       reasons: [],
       askedAt: 0,
-      needsBiometric: false,
+      needsPin: false,
     };
     const base = {
       member: { role: 'owner' as const },
@@ -165,7 +167,7 @@ describe('voice approvals (server-enforced)', () => {
       windowMs: 90_000,
     };
     expect(checkVoiceApproval({ ...base, maxPaise: 200_000 })).toEqual({ ok: true });
-    expect(checkVoiceApproval({ ...base, maxPaise: 199_999 })).toEqual({ ok: false, reason: 'needs_biometric' });
+    expect(checkVoiceApproval({ ...base, maxPaise: 199_999 })).toEqual({ ok: false, reason: 'needs_pin' });
     expect(checkVoiceApproval({ ...base, maxPaise: 200_000, now: 89_999 }).ok).toBe(true);
     expect(checkVoiceApproval({ ...base, maxPaise: 200_000, now: 90_000 })).toEqual({ ok: false, reason: 'too_late' });
     expect(checkVoiceApproval({ ...base, maxPaise: 200_000, authenticated: false }).reason).toBe('unauthenticated');
@@ -179,7 +181,7 @@ describe('voice approvals (server-enforced)', () => {
     const s = session(adder(h).id);
     const decisions: VoiceDecision[] = [];
     await runConversationTurn(s, 'pathao', 'bn-IN', d, { onDecision: (x) => decisions.push(x) });
-    expect(decisions[0]).toMatchObject({ verdict: 'HOLD', needsBiometric: false, spokenConfirmation: false });
+    expect(decisions[0]).toMatchObject({ verdict: 'HOLD', needsPin: false, spokenConfirmation: false });
     expect(s.pending).toBeUndefined();
     await runConversationTurn(s, 'haan', 'bn-IN', d);
     expect(llm.resultsAt(5)[0]!.body).toMatchObject({ ok: false, refused: 'owner_required' });
@@ -220,14 +222,14 @@ describe('voice approvals (server-enforced)', () => {
       (req) => [use('confirm_pending_order', { quoteHash: /[0-9a-f]{64}/.exec(JSON.stringify(req.messages))![0] })],
       [say('Hobe na.')],
     ]);
-    const d = deps(llm, { voiceApprovalMaxPaise: 10_000_000 });
+    const d = deps(llm, { pinRequiredAbovePaise: 10_000_000 });
     const s = session();
     const decisions: VoiceDecision[] = [];
     const r = await runConversationTurn(s, 'pressure cooker pathao', 'en-IN', d, {
       onDecision: (x) => decisions.push(x),
     });
     expect(r.outcome).toBe('blocked');
-    expect(decisions[0]).toMatchObject({ verdict: 'BLOCK', needsBiometric: false, spokenConfirmation: false });
+    expect(decisions[0]).toMatchObject({ verdict: 'BLOCK', needsPin: false, spokenConfirmation: false });
     expect(s.pending).toBeUndefined();
     await runConversationTurn(s, 'yes', 'en-IN', d);
     expect(llm.resultsAt(5)[0]!.body).toMatchObject({ ok: false, refused: 'nothing_pending' });
@@ -351,7 +353,7 @@ describe('ConversationSession', () => {
       placeId: 'p',
       reasons: [],
       askedAt: 0,
-      needsBiometric: false,
+      needsPin: false,
     };
     s.attach(1);
     expect(s.pending).toBeUndefined();

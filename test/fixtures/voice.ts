@@ -4,7 +4,10 @@ import type { FastifyInstance } from 'fastify';
 import WebSocket from 'ws';
 import type { LlmRequest, LlmResponse } from '../../src/agent/llm.js';
 import type { Store } from '../../src/agent/store.js';
+import type { ApiDeps } from '../../src/api/http.js';
 import { buildServer } from '../../src/api/server.js';
+import type { KeypadSource } from '../../src/voice/keypad.js';
+import type { VoiceOptions } from '../../src/voice/route.js';
 import type { Supplier } from '../../src/core/types.js';
 import type { VoiceConfig } from '../../src/voice/config.js';
 import { FillerCache } from '../../src/voice/fillers.js';
@@ -45,6 +48,26 @@ export class StreamingLlm extends ScriptedLlm {
 }
 
 export type Frame = { kind: 'json'; msg: Record<string, unknown> } | { kind: 'binary'; data: Buffer };
+
+/** A phone keypad, as the telephony adapter will provide it: the test "types" digits. */
+export class FakeKeypad implements KeypadSource {
+  private handlers: ((digits: string) => void)[] = [];
+
+  onDigits(handler: (digits: string) => void): () => void {
+    this.handlers.push(handler);
+    return () => {
+      this.handlers = this.handlers.filter((h) => h !== handler);
+    };
+  }
+
+  type(digits: string): void {
+    for (const h of this.handlers) h(digits);
+  }
+
+  get attached(): number {
+    return this.handlers.length;
+  }
+}
 
 export class VoiceClient {
   readonly frames: Frame[] = [];
@@ -130,7 +153,6 @@ export function testVoiceConfig(stt: FakeStt, tts: FakeTts, over: Partial<VoiceC
       speakers: { 'bn-IN': 'shubh', 'hi-IN': 'shubh', 'en-IN': 'shubh' },
       pace: 1.05,
     },
-    approvalMaxPaise: 200_000,
     confirmWindowMs: 90_000,
     fillerAfterMs: 1_200,
     sessionTtlMs: 10 * 60_000,
@@ -150,6 +172,10 @@ export async function startVoice(args: {
   tts?: FakeTtsOptions;
   clock?: () => number;
   logLevel?: string;
+  /** PIN_REQUIRED_ABOVE_RUPEES in paise; ₹2,000 here so the ₹1,123 test cart can be approved by a spoken yes. */
+  pinRequiredAbovePaise?: number;
+  keypadFor?: VoiceOptions['keypadFor'];
+  web?: ApiDeps['web'];
 }): Promise<VoiceHarness> {
   const stt = await FakeStt.start();
   const tts = await FakeTts.start(args.tts);
@@ -167,7 +193,15 @@ export async function startVoice(args: {
       defaultHouseholdId: args.householdId,
       now: args.now,
       model: 'test-model',
-      voice: { config, fillers, sessions, ...(args.clock ? { clock: args.clock } : {}) },
+      pinRequiredAbovePaise: args.pinRequiredAbovePaise ?? 200_000,
+      ...(args.web ? { web: args.web } : {}),
+      voice: {
+        config,
+        fillers,
+        sessions,
+        ...(args.clock ? { clock: args.clock } : {}),
+        ...(args.keypadFor ? { keypadFor: args.keypadFor } : {}),
+      },
     },
     {
       logStream: { write: (line: string) => logs.push(JSON.parse(line) as Record<string, unknown>) },

@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { sarvamConfigFromEnv, voiceConfigFromEnv, voiceLang, type SarvamConfig } from '../src/voice/config.js';
+import { parsePinThreshold } from '../src/api/web-config.js';
 import {
   SttStream,
   TtsStream,
@@ -285,7 +286,7 @@ describe('voice config', () => {
       sttUrl: 'wss://api.sarvam.ai/speech-to-text/ws',
       ttsUrl: 'wss://api.sarvam.ai/text-to-speech/ws',
     });
-    expect(c.approvalMaxPaise).toBe(200_000);
+    expect(parsePinThreshold(undefined)).toBe(50_000); // PIN_REQUIRED_ABOVE_RUPEES default ₹500 caps a spoken yes
     expect(c.confirmWindowMs).toBe(90_000);
   });
 
@@ -296,16 +297,15 @@ describe('voice config', () => {
       SARVAM_STT_LANGUAGE: 'bn-IN',
       SARVAM_TTS_MODEL: 'bulbul:v4-flash',
       SARVAM_SPEAKER_BN: 'bn-voice',
-      VOICE_APPROVAL_MAX_RUPEES: '1500',
     });
     expect(c.sarvam).toMatchObject({ sttMode: 'translit', sttLanguage: 'bn-IN', ttsModel: 'bulbul:v4-flash' });
     expect(c.sarvam!.speakers['bn-IN']).toBe('bn-voice');
-    expect(c.approvalMaxPaise).toBe(150_000);
+    expect(parsePinThreshold('1500')).toBe(150_000);
     expect(() => voiceConfigFromEnv({ SARVAM_API_KEY: 'k', SARVAM_STT_MODE: 'nope' })).toThrow(/SARVAM_STT_MODE/);
     expect(() => voiceConfigFromEnv({ SARVAM_TTS_MODEL: 'bulbul:v9', SARVAM_API_KEY: 'k' })).toThrow(
       /SARVAM_TTS_MODEL/,
     );
-    expect(() => voiceConfigFromEnv({ VOICE_APPROVAL_MAX_RUPEES: '20.5' })).toThrow(/whole number/);
+    expect(() => parsePinThreshold('20.5')).toThrow(/whole number/);
   });
 
   it('maps STT languages to the three reply languages', () => {

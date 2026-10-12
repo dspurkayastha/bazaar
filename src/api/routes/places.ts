@@ -58,7 +58,10 @@ export function registerPlaceRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const place: Place = {
       id: newId('pl'),
       householdId: household.id,
-      key: uniqueKey(nickname, household.places.map((p) => p.key)),
+      key: uniqueKey(
+        nickname,
+        household.places.map((p) => p.key),
+      ),
       nickname,
       aliases: optStringArray(o, 'aliases') ?? [],
       canonicalAddress: reqString(o, 'canonicalAddress', 500),

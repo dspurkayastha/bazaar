@@ -6,7 +6,7 @@ import type { Household } from '../src/core/types.js';
 import { StubSupplier } from '../src/suppliers/stub/index.js';
 import { NOW, adder, household, owner, placeNamed } from './fixtures/context.js';
 import { ScriptedLlm, asked, say, searchFor, use, type Step } from './fixtures/llm.js';
-import { WEBHOOK_SECRET, memberAuth, signed } from './fixtures/api.js';
+import { PIN, WEBHOOK_SECRET, memberAuth, setPin, signed } from './fixtures/api.js';
 
 const TOKEN = 'test-token';
 /** The household read token: /ledger/summary only. */
@@ -47,6 +47,7 @@ beforeEach(async () => {
   store = new MemoryStore([h]);
   supplier = new StubSupplier({ now: () => NOW });
   auth = await memberAuth(store, owner(h));
+  await setPin(store, owner(h));
   adderAuth = await memberAuth(store, adder(h));
 });
 afterEach(async () => {
@@ -97,7 +98,7 @@ describe('POST /request and POST /approve', () => {
     expect(supplier.placeCalls).toBe(0);
     const hash = result.chosen.hash as string;
 
-    const ok = await post('/approve', { quoteHash: hash, memberId: owner(h).id });
+    const ok = await post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN });
     expect(ok.statusCode).toBe(200);
     const out = ok.json();
     expect(out.decision.verdict).toBe('PAY');
@@ -110,7 +111,7 @@ describe('POST /request and POST /approve', () => {
     expect(store.orders).toHaveLength(1);
 
     // Placement is idempotent per quote: approving again returns the existing order and sends nothing.
-    const again = (await post('/approve', { quoteHash: hash, memberId: owner(h).id })).json();
+    const again = (await post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN })).json();
     expect(again.placed).toBe(false);
     expect(again.alreadyPlaced).toBe(true);
     expect(again.order.supplierOrderId).toBe(out.order.supplierOrderId);
@@ -123,7 +124,7 @@ describe('POST /request and POST /approve', () => {
 
     // A fresh quote of the same cart later is a new purchase, not a replay: the cart is gone, so the gate BLOCKs.
     await store.saveQuote(h.id, { ...result.chosen, createdAt: '2026-10-12T14:05:00.000Z' });
-    const later = (await post('/approve', { quoteHash: hash, memberId: owner(h).id })).json();
+    const later = (await post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN })).json();
     expect(later.alreadyPlaced).toBeUndefined();
     expect(later.decision.verdict).toBe('BLOCK');
     expect(later.requote).toBe(true);
@@ -151,7 +152,7 @@ describe('POST /request and POST /approve', () => {
     start(buildAndPropose(cart1123, 'Cart for home.'));
     const hash = (await post('/request', { memberId: owner(h).id, text: 'biryani' })).json().chosen.hash as string;
     supplier.setPrice('v-milk', 12500);
-    const out = (await post('/approve', { quoteHash: hash, memberId: owner(h).id })).json();
+    const out = (await post('/approve', { quoteHash: hash, memberId: owner(h).id, pin: PIN })).json();
     expect(out.decision.verdict).toBe('BLOCK');
     expect(out.requote).toBe(true);
     expect(out.placed).toBe(false);

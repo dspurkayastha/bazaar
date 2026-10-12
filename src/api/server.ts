@@ -74,7 +74,7 @@ export function buildServer(
 
   // Routes live in one child context registered after the plugins, so every route gets the rate limit first and
   // then authentication (both are route-level onRequest hooks, in that order): floods are cut before any token lookup.
-  const auth = authHook(deps.store, deps.apiToken);
+  const auth = authHook(deps, deps.apiToken);
   app.register(async (scoped) => {
     scoped.addHook('onRoute', (route) => {
       const existing =

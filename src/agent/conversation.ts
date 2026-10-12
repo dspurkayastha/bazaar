@@ -11,7 +11,8 @@
  *     model call on barge-in, but a running tool call is never aborted (it finishes and is recorded),
  *   - one extra tool, `confirm_pending_order`. The model only asks; the rules of docs/VOICE_PROTOCOL.md "Voice approvals"
  *     are enforced here, in code: owner, authenticated connection, the previous turn asked about this exact quote hash,
- *     total ≤ the voice limit (exact paise), and under 90 s since the question. Otherwise it refuses or asks for Face ID.
+ *     total ≤ the PIN threshold (PIN_REQUIRED_ABOVE_RUPEES, exact paise), and under 90 s since the question. Above the
+ *     threshold it refuses and asks for the PIN (decision.needsPin: web PIN pad, or the phone keypad).
  *     Approving goes through the injected `approve` (the /approve path: Approval → placeWithGate), nothing new on the
  *     money path. A BLOCK is never pending, so it can never be confirmed.
  *
@@ -71,8 +72,8 @@ export interface PendingConfirmation {
   reasons: PolicyDecision['reasons'];
   /** Clock ms when the question was asked (end of the turn that asked it). */
   askedAt: number;
-  /** Above the voice limit: only Face ID (`approve` from the app) can approve it. */
-  needsBiometric: boolean;
+  /** Above the PIN threshold: only the owner's PIN (web PIN pad or phone keypad) can approve it. */
+  needsPin: boolean;
   etaMinutes?: number;
 }
 
@@ -114,8 +115,8 @@ export interface ApprovalOutcome {
 export interface ConversationDeps extends AgentDeps {
   /** Create an owner approval for the hash and re-run the gate (approveQuote). */
   approve(quoteHash: string, who: { householdId: string; memberId: string }): Promise<ApprovalOutcome>;
-  /** VOICE_APPROVAL_MAX in paise. */
-  voiceApprovalMaxPaise: Paise;
+  /** PIN_REQUIRED_ABOVE_RUPEES in paise: a spoken yes approves only at or under this total. */
+  pinRequiredAbovePaise: Paise;
   confirmWindowMs?: number;
   /** Wall clock in ms for the confirmation window (Date.now). */
   clock?: () => number;
@@ -139,7 +140,8 @@ export interface VoiceDecision {
   verdict: PolicyDecision['verdict'];
   reasons: PolicyDecision['reasons'];
   quoteHash: string;
-  needsBiometric: boolean;
+  /** Above the PIN threshold: the app shows a PIN pad (web) / the call asks for the keypad PIN. */
+  needsPin: boolean;
   spokenConfirmation: boolean;
 }
 
@@ -177,7 +179,7 @@ export interface TurnResult {
 
 // ---------- fixed phrases (code-written replies) ----------
 
-type Phrase = 'failed' | 'noStore' | 'placed' | 'cancelled';
+type Phrase = 'failed' | 'noStore' | 'placed' | 'cancelled' | 'pinWrong' | 'pinLocked' | 'pinNotSet';
 const PHRASES: Record<Phrase, Record<string, string>> = {
   failed: {
     'bn-IN': 'দুঃখিত, এখন কার্টটা বানাতে পারলাম না। কিছু অর্ডার হয়নি।',
@@ -199,6 +201,21 @@ const PHRASES: Record<Phrase, Record<string, string>> = {
     'hi-IN': 'ठीक है, ऑर्डर नहीं कर रहे।',
     'en-IN': 'Okay, not ordering it.',
   },
+  pinWrong: {
+    'bn-IN': 'পিনটা মিলল না। আবার চেষ্টা করুন।',
+    'hi-IN': 'पिन सही नहीं है। फिर से कोशिश कीजिए।',
+    'en-IN': "That PIN didn't match. Please try again.",
+  },
+  pinLocked: {
+    'bn-IN': 'অনেকবার ভুল পিন হয়েছে, পিন দিয়ে অনুমোদন এখন বন্ধ। কিছু অর্ডার হয়নি।',
+    'hi-IN': 'कई बार गलत पिन डाला गया, पिन से मंज़ूरी अभी बंद है। कुछ भी ऑर्डर नहीं हुआ।',
+    'en-IN': 'Too many wrong PINs, so PIN approvals are locked for now. Nothing was ordered.',
+  },
+  pinNotSet: {
+    'bn-IN': 'এখনও কোনো পিন সেট করা নেই। ওয়েব অ্যাপে পিন সেট করুন। কিছু অর্ডার হয়নি।',
+    'hi-IN': 'अभी कोई पिन सेट नहीं है। वेब ऐप में पिन सेट कीजिए। कुछ भी ऑर्डर नहीं हुआ।',
+    'en-IN': 'No PIN is set yet. Set one in the web app. Nothing was ordered.',
+  },
 };
 
 export function phrase(p: Phrase, lang: string): string {
@@ -210,7 +227,7 @@ export function phrase(p: Phrase, lang: string): string {
 export const CONFIRM_TOOL: ToolSpec = {
   name: 'confirm_pending_order',
   description:
-    'Approve and place the held cart that your PREVIOUS turn asked the user to confirm, after the user clearly said yes ("yes", "haan", "hyan, order it"). Pass the quoteHash from propose_checkout. The server checks who is speaking, the amount limit and the time window, and may refuse or require Face ID; follow its `say` hint. Never call it for anything else.',
+    'Approve and place the held cart that your PREVIOUS turn asked the user to confirm, after the user clearly said yes ("yes", "haan", "hyan, order it"). Pass the quoteHash from propose_checkout. The server checks who is speaking, the amount limit and the time window, and may refuse or require the PIN; follow its `say` hint. Never call it for anything else.',
   input_schema: {
     type: 'object',
     properties: {
@@ -223,7 +240,7 @@ export const CONFIRM_TOOL: ToolSpec = {
 export const VOICE_TOOL_SPECS: ToolSpec[] = [...TOOL_SPECS.filter((t) => t.name !== 'ask_user'), CONFIRM_TOOL];
 
 export type RefusalReason =
-  'owner_required' | 'unauthenticated' | 'nothing_pending' | 'wrong_quote' | 'too_late' | 'needs_biometric';
+  'owner_required' | 'unauthenticated' | 'nothing_pending' | 'wrong_quote' | 'too_late' | 'needs_pin';
 
 export interface ConfirmCheck {
   ok: boolean;
@@ -249,7 +266,7 @@ export function checkVoiceApproval(args: {
   if (!pending) return { ok: false, reason: 'nothing_pending' };
   if (pending.quoteHash !== quoteHash) return { ok: false, reason: 'wrong_quote' };
   if (!(now - pending.askedAt < windowMs)) return { ok: false, reason: 'too_late' };
-  if (pending.needsBiometric || pending.total > maxPaise) return { ok: false, reason: 'needs_biometric' };
+  if (pending.needsPin || pending.total > maxPaise) return { ok: false, reason: 'needs_pin' };
   return { ok: true };
 }
 
@@ -262,7 +279,8 @@ const REFUSAL_SAY: Record<RefusalReason, string> = {
     'That is not the cart you asked about. Nothing was ordered; say the total of the current cart again and ask.',
   too_late:
     'The confirmation came too late (over 90 seconds). Say the total again and ask again whether to place the order.',
-  needs_biometric: 'This total is above the voice limit. Ask them to approve with Face ID on the phone.',
+  needs_pin:
+    'This total is above the PIN limit. Ask them to approve with their PIN (the PIN pad on screen, or the phone keypad).',
 };
 
 // ---------- helpers ----------
@@ -506,7 +524,7 @@ export async function runConversationTurn(
     now: now(),
     maxToolCalls: maxCalls,
     lang,
-    voiceApprovalMax: deps.voiceApprovalMaxPaise,
+    pinThreshold: deps.pinRequiredAbovePaise,
   });
   const sensitive = sensitiveStrings(household, place);
   const deadline = startedAt + maxWallMs;
@@ -533,23 +551,23 @@ export async function runConversationTurn(
       pending,
       quoteHash,
       now: clock(),
-      maxPaise: deps.voiceApprovalMaxPaise,
+      maxPaise: deps.pinRequiredAbovePaise,
       windowMs,
     });
     if (!check.ok) {
       const reason = check.reason!;
       deps.log?.('voice_confirm_refused', { reason });
-      if (reason === 'needs_biometric' && pending) {
-        // Still waiting: the app runs Face ID and sends `approve` for this hash.
-        newPending = { ...pending, needsBiometric: true };
+      if (reason === 'needs_pin' && pending) {
+        // Still waiting: the owner enters the PIN (web PIN pad → POST /api/carts/:hash/approve, or the keypad).
+        newPending = { ...pending, needsPin: true };
         hooks.onDecision?.({
           verdict: 'HOLD',
           reasons: pending.reasons,
           quoteHash: pending.quoteHash,
-          needsBiometric: true,
+          needsPin: true,
           spokenConfirmation: false,
         });
-        return { ok: false, needsBiometric: true, refused: reason, say: REFUSAL_SAY[reason] };
+        return { ok: false, needsPin: true, refused: reason, say: REFUSAL_SAY[reason] };
       }
       if (reason === 'too_late' && pending) {
         // Re-arm: the reply must say the total again and ask; the next yes starts a fresh 90 s.
@@ -571,7 +589,7 @@ export async function runConversationTurn(
         verdict: out.decision.verdict,
         reasons: out.decision.reasons,
         quoteHash,
-        needsBiometric: false,
+        needsPin: false,
         spokenConfirmation: true,
       });
       if (out.order && (out.placed || out.alreadyPlaced)) {
@@ -611,9 +629,9 @@ export async function runConversationTurn(
     const decision = state.decision;
     if (!quote || !decision) return r;
     const owner = member.role === 'owner';
-    const overLimit = quote.total > deps.voiceApprovalMaxPaise;
+    const overLimit = quote.total > deps.pinRequiredAbovePaise;
     if (decision.verdict === 'HOLD') {
-      const needsBiometric = owner && overLimit;
+      const needsPin = owner && overLimit;
       const spokenConfirmation = owner && !overLimit;
       if (owner) {
         newPending = {
@@ -622,7 +640,7 @@ export async function runConversationTurn(
           supplierId: quote.supplierId,
           placeId: quote.placeId,
           reasons: decision.reasons,
-          needsBiometric,
+          needsPin,
           ...(quote.etaMinutes !== undefined ? { etaMinutes: quote.etaMinutes } : {}),
         };
       }
@@ -630,13 +648,13 @@ export async function runConversationTurn(
         verdict: 'HOLD',
         reasons: decision.reasons,
         quoteHash: quote.hash,
-        needsBiometric,
+        needsPin,
         spokenConfirmation,
       });
       const next = !owner
         ? 'Say the total and that an owner will approve it. Do not ask this member to confirm.'
-        : needsBiometric
-          ? 'Say the total and ask them to approve with Face ID on the phone.'
+        : needsPin
+          ? 'Say the total and ask them to approve it with their PIN (on screen, or on the phone keypad).'
           : 'End your reply by saying the total in words and asking whether to place the order.';
       return { ...r, voice: { next, totalInr: formatINR(quote.total) } };
     }
@@ -644,7 +662,7 @@ export async function runConversationTurn(
       verdict: decision.verdict,
       reasons: decision.reasons,
       quoteHash: quote.hash,
-      needsBiometric: false,
+      needsPin: false,
       spokenConfirmation: false,
     });
     if (decision.verdict === 'PAY' && state.order) {
@@ -655,7 +673,7 @@ export async function runConversationTurn(
       });
       return { ...r, voice: { next: 'Say it is ordered, the total, and the delivery time if known.' } };
     }
-    return { ...r, voice: { next: 'Say plainly what was blocked; it cannot be approved by voice or Face ID.' } };
+    return { ...r, voice: { next: 'Say plainly what was blocked; it cannot be approved by voice or PIN.' } };
   };
 
   const runTool = async (use: {
@@ -851,7 +869,7 @@ export async function runConversationTurn(
   });
 }
 
-/** Record a turn the app drove without speech (Face ID approve, cancel), so the model sees it next time. */
+/** Record a turn the app drove without speech (keypad PIN approve, cancel), so the model sees it next time. */
 export function noteTurn(session: ConversationState, userNote: string, reply: string): void {
   session.turns.push([
     { role: 'user', content: userNote },

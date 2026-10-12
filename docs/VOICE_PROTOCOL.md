@@ -5,7 +5,7 @@ Decided 12 Oct 2026: voice-first, native iPhone app on the Action Button, Bengal
 ## Transport
 
 `wss://bazaar.sciscribesolutions.com/voice` (local dev: `ws://127.0.0.1:8787/voice`).
-Auth: HTTP header `Authorization: Bearer mtk_...` (member token) on the upgrade request. Missing/invalid → close 4401. One live voice session per member; a second connection closes the first with 4409.
+Auth, on the upgrade request: HTTP header `Authorization: Bearer mtk_...` (member token), or — for the web app's Talk button — the `bz_session` cookie, accepted only when `Origin` equals `WEB_ORIGIN` (docs/WEB_API.md). Missing/invalid → close 4401. One live voice session per member; a second connection closes the first with 4409.
 
 Two frame kinds:
 - **Binary frames, app → server:** raw mic audio, PCM signed 16-bit little-endian, 16 000 Hz, mono, 20–40 ms per frame (640–1280 bytes). Sent continuously while the session is open, including while Bazaar is speaking (needed for barge-in; the app uses `AVAudioSession` mode `.voiceChat` so echo cancellation removes Bazaar's own voice).
@@ -18,15 +18,14 @@ Two frame kinds:
 | --- | --- | --- |
 | `hello` | `appVersion`, `device`, `locale` (e.g. `bn-IN`), `placeHint?` (place key/nickname if the user picked one) | first message after connect |
 | `interrupt` | — | user tapped to stop Bazaar talking (voice barge-in is detected server-side too) |
-| `approve` | `quoteHash`, `biometric: true` | sent after a successful Face ID when the server asked for `needsBiometric` |
-| `cancel` | — | user said/tapped "cancel" on the pending cart; server clears the pending confirmation |
+| `cancel` | — | user said/tapped "cancel" on the pending cart; server clears the pending confirmation and any PIN request |
 | `bye` | — | user ended the session (or 20 s of silence on the app side) |
 
 ## Server → app messages
 
 | type | fields | meaning |
 | --- | --- | --- |
-| `ready` | `sessionId`, `member` {name, role}, `place` {key, nickname} | gateway connected to STT; app shows "listening" |
+| `ready` | `sessionId`, `member` {name, role}, `place` {key (the place's slug), nickname} | gateway connected to STT; app shows "listening" |
 | `state` | `value`: `listening` \| `thinking` \| `speaking` | drives the orb and haptics |
 | `heard` | `text`, `lang` (e.g. `bn-IN`), `final: true` | caption of what the user said (final transcript per turn) |
 | `say` | `turnId`, `text` | caption of what Bazaar is saying (sent before its audio) |
@@ -34,16 +33,17 @@ Two frame kinds:
 | `audio_end` | `turnId`, `segment` | segment complete |
 | `stop_audio` | `turnId` | stop playback NOW and drop queued audio (barge-in, interrupt, or superseded) |
 | `cart` | `quote` {hash, supplier, place, lines[{name,label,qty,lineTotal}], fees[{label,amount}], total, etaMinutes}, `removed[]` | show/refresh the cart card. Amounts are integer paise |
-| `decision` | `verdict` PAY\|HOLD\|BLOCK, `reasons[]`, `quoteHash`, `needsBiometric` (bool), `spokenConfirmation` (bool) | gate result. `needsBiometric: true` → app runs Face ID then sends `approve` |
+| `decision` | `verdict` PAY\|HOLD\|BLOCK, `reasons[]`, `quoteHash`, `needsPin` (bool), `spokenConfirmation` (bool) | gate result. `needsPin: true` → the web app shows its PIN pad and calls `POST /api/carts/:quoteHash/approve {pin}`; on a phone call the owner types the PIN on the keypad |
 | `order` | `supplierOrderId`, `status`, `etaMinutes?` | order placed |
 | `error` | `code`, `message` (user-safe) | recoverable error; session stays open |
 
 ## Voice approvals (enforced on the server, never on the app)
 
-- A spoken "yes / haan / hyan, order it" approves the pending held quote only when ALL hold: the speaker is an `owner` authenticated by member token on this connection; Bazaar's previous turn spoke the total and asked for confirmation (state `awaiting_confirmation` for that exact quote hash); the quote total ≤ `VOICE_APPROVAL_MAX` (default ₹2,000); and less than 90 s have passed since the question.
-- Above `VOICE_APPROVAL_MAX`, the server sends `decision` with `needsBiometric: true`; the app runs Face ID and sends `approve`. (The biometric is asserted by the owner's own authenticated device; the gate still re-reads the cart and checks the hash.)
-- BLOCK verdicts are never approvable by voice or Face ID.
-- Adders can build carts by voice; their "yes" is ignored for payment and Bazaar says the owner will approve.
+- A spoken "yes / haan / hyan, order it" approves the pending held quote only when ALL hold: the speaker is an `owner` authenticated on this connection (member token or web session); Bazaar's previous turn spoke the total and asked for confirmation (state `awaiting_confirmation` for that exact quote hash); the quote total ≤ `PIN_REQUIRED_ABOVE_RUPEES` (default ₹500, exact paise); and less than 90 s have passed since the question.
+- Above `PIN_REQUIRED_ABOVE_RUPEES`, the server sends `decision` with `needsPin: true` and the session waits in `awaiting_pin` (shown to the app as `listening`) for up to 5 minutes. A spoken yes is refused and the decision is sent again. The PIN arrives either from the web app's PIN pad (`POST /api/carts/:quoteHash/approve {pin}`, docs/WEB_API.md) or, on a phone call, from the keypad (DTMF → `verifyPinForApproval`). Wrong PINs count toward the lockout (5 → 15 min; 10 in 24 h → until reset). The PIN is never spoken, logged or sent over this socket. The gate still re-reads the cart and checks the hash.
+- BLOCK verdicts are never approvable by voice or PIN.
+- Adders can build carts by voice; their "yes" (and any keypad PIN) is ignored for payment and Bazaar says the owner will approve.
+- There is no `needsBiometric` / Face ID approval any more: an `approve` message from an older app is an unknown type and is ignored.
 
 ## Speech behaviour
 

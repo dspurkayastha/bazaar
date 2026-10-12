@@ -115,7 +115,9 @@ const liveProofs = new WeakSet<PinProof>();
 export function consumePinProof(proof: PinProof, memberId: string, nowMs: number): boolean {
   if (!liveProofs.has(proof)) return false;
   liveProofs.delete(proof);
-  return proof.memberId === memberId && nowMs - proof.verifiedAtMs >= 0 && nowMs - proof.verifiedAtMs < PIN_PROOF_TTL_MS;
+  return (
+    proof.memberId === memberId && nowMs - proof.verifiedAtMs >= 0 && nowMs - proof.verifiedAtMs < PIN_PROOF_TTL_MS
+  );
 }
 
 export type PinVerification =
@@ -133,13 +135,31 @@ export interface PinStatus {
 
 // ---------- service ----------
 
+/** Per-store queues: every PinService over the same store serialises on the same per-member chain. */
+const storeQueues = new WeakMap<object, Map<string, Promise<unknown>>>();
+function queuesFor(store: object): Map<string, Promise<unknown>> {
+  let q = storeQueues.get(store);
+  if (!q) {
+    q = new Map();
+    storeQueues.set(store, q);
+  }
+  return q;
+}
+
 export class PinService {
-  private readonly queues = new Map<string, Promise<unknown>>();
+  private readonly queues: Map<string, Promise<unknown>>;
 
   constructor(
     private readonly store: IdentityStore,
     private readonly now: () => ISODateTime = () => new Date().toISOString(),
-  ) {}
+  ) {
+    this.queues = queuesFor(store);
+  }
+
+  /** Accept a PinProof from verifyPinForApproval once (same member, under PIN_PROOF_TTL_MS old, on this clock). */
+  consumeProof(proof: PinProof, memberId: string): boolean {
+    return consumePinProof(proof, memberId, Date.parse(this.now()));
+  }
 
   /** Run `fn` after every earlier PIN operation for this member has finished. */
   private serial<T>(memberId: string, fn: () => Promise<T>): Promise<T> {
@@ -239,13 +259,7 @@ export class PinService {
   }
 }
 
-/** One PinService per store, so every route and the voice gateway share the per-member serialisation. */
-const services = new WeakMap<object, PinService>();
+/** A PinService on `now`; every service over the same store shares the per-member serialisation. */
 export function pinServiceFor(store: IdentityStore, now?: () => ISODateTime): PinService {
-  let s = services.get(store);
-  if (!s) {
-    s = new PinService(store, now);
-    services.set(store, s);
-  }
-  return s;
+  return new PinService(store, now);
 }

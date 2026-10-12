@@ -6,11 +6,8 @@
  *   SARVAM_STT_LANGUAGE       bn-IN, hi-IN, en-IN, … or `unknown` for auto-detect (default unknown)
  *   SARVAM_TTS_MODEL          bulbul:v2 | bulbul:v3 | bulbul:v4-flash (default bulbul:v3)
  *   SARVAM_SPEAKER_BN/HI/EN   TTS voice per language (default shubh)
- *   VOICE_APPROVAL_MAX_RUPEES spoken "yes" approves a held cart only up to this total, whole rupees (default 2000)
+ *   (PIN_REQUIRED_ABOVE_RUPEES, src/api/web-config.ts, caps what a spoken "yes" can approve; above it the PIN is needed)
  */
-import { rupees } from '../core/money.js';
-import type { Paise } from '../core/types.js';
-
 export const VOICE_LANGS = ['bn-IN', 'hi-IN', 'en-IN'] as const;
 export type VoiceLang = (typeof VOICE_LANGS)[number];
 
@@ -45,8 +42,6 @@ export interface SarvamConfig {
 export interface VoiceConfig {
   /** Undefined when SARVAM_API_KEY is missing: /voice answers voice_unconfigured. */
   sarvam?: SarvamConfig;
-  /** Spoken approvals only up to this total (exact paise). */
-  approvalMaxPaise: Paise;
   /** A spoken "yes" counts only this long after the question (90 s). */
   confirmWindowMs: number;
   /** Play a cached filler when a tool call has been running this long (1.2 s). */
@@ -57,20 +52,11 @@ export interface VoiceConfig {
   maxTurns: number;
 }
 
-export const DEFAULT_VOICE_APPROVAL_MAX_RUPEES = 2000;
-
 function oneOf<T extends string>(value: string | undefined, allowed: readonly T[], fallback: T, name: string): T {
   const v = value?.trim();
   if (!v) return fallback;
   if (!(allowed as readonly string[]).includes(v)) throw new Error(`${name} must be one of ${allowed.join(', ')}`);
   return v as T;
-}
-
-export function parseApprovalMax(raw: string | undefined): Paise {
-  const v = raw?.trim();
-  if (!v) return rupees(DEFAULT_VOICE_APPROVAL_MAX_RUPEES);
-  if (!/^\d+$/.test(v)) throw new Error('VOICE_APPROVAL_MAX_RUPEES must be a whole number of rupees');
-  return rupees(Number(v));
 }
 
 /** Build the Sarvam part from env; undefined without an API key. */
@@ -100,7 +86,6 @@ export function voiceConfigFromEnv(env: NodeJS.ProcessEnv = process.env): VoiceC
   const sarvam = sarvamConfigFromEnv(env);
   return {
     ...(sarvam ? { sarvam } : {}),
-    approvalMaxPaise: parseApprovalMax(env.VOICE_APPROVAL_MAX_RUPEES),
     confirmWindowMs: 90_000,
     fillerAfterMs: 1_200,
     sessionTtlMs: 10 * 60_000,

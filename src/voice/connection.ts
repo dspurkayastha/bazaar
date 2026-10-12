@@ -9,9 +9,11 @@
  *     aborted.
  *   - Fillers: when a tool call has run for `fillerAfterMs` (1.2 s) and nothing has been said yet, one cached filler
  *     in the turn's language is played.
- *   - Approvals: spoken yes → conversation.ts (confirm_pending_order, rules in code). Face ID → `approve` here, only
- *     for the hash the server itself asked about (needsBiometric), only for an owner on this authenticated
- *     connection. Both go through the /approve path (approveQuote → placeWithGate).
+ *   - Approvals: spoken yes → conversation.ts (confirm_pending_order, rules in code), only at or under the PIN
+ *     threshold. Above it the server sends `decision.needsPin`: the web app answers with its PIN pad over HTTP
+ *     (POST /api/carts/:quoteHash/approve); a phone call answers on the keypad (attachKeypad → voice/keypad.ts), only
+ *     for the hash the server itself asked about, only for an owner on this authenticated connection. All of them go
+ *     through the approval service (approveQuote → placeWithGate).
  */
 import type WebSocket from 'ws';
 import {
@@ -26,11 +28,13 @@ import {
 import { makeRequest } from '../agent/loop.js';
 import { scrub, type VoiceTurnTelemetry } from '../agent/trace.js';
 import type { AuthedMember } from '../api/auth.js';
-import type { ApiDeps } from '../api/http.js';
+import { pinThreshold, pinsOf, type ApiDeps } from '../api/http.js';
+import type { ApprovalFactor } from '../api/routes/approve.js';
 import type { Household, Member, Place } from '../core/types.js';
 import { normalisePhrase, resolvePlace } from '../places/resolver.js';
 import { TTS_SAMPLE_RATE, voiceLang, type SarvamConfig, type VoiceConfig, type VoiceLang } from './config.js';
 import { FillerCache, type Filler } from './fillers.js';
+import { handleKeypadPin, type KeypadResult, type KeypadSource } from './keypad.js';
 import {
   SttStream,
   TtsStream,
@@ -40,13 +44,7 @@ import {
   type WebSocketFactory,
 } from './sarvam.js';
 import { SentenceSplitter, splitSentences } from './sentences.js';
-import {
-  BIOMETRIC_WINDOW_MS,
-  appState,
-  type ConversationSession,
-  type SessionRegistry,
-  type VoiceState,
-} from './session.js';
+import { PIN_WINDOW_MS, appState, type ConversationSession, type SessionRegistry, type VoiceState } from './session.js';
 
 export interface VoiceLogger {
   debug(obj: object, msg?: string): void;
@@ -61,7 +59,7 @@ export interface VoiceRuntime {
   sarvam: SarvamConfig;
   sessions: SessionRegistry;
   fillers: FillerCache;
-  approve: (quoteHash: string, who: AuthedMember) => Promise<ApprovalOutcome>;
+  approve: (quoteHash: string, who: AuthedMember, factor?: ApprovalFactor) => Promise<ApprovalOutcome>;
   wsFactory?: WebSocketFactory;
   /** Wall clock, ms (Date.now): sessions, confirmation window. */
   clock?: () => number;
@@ -203,6 +201,7 @@ export class VoiceConnection {
   private turnSeq = 0;
   private lastAppState?: string;
   private readonly clock: () => number;
+  private readonly detachers: (() => void)[] = [];
   readonly sarvamLog: VoiceLog;
 
   constructor(
@@ -265,9 +264,6 @@ export class VoiceConnection {
         return;
       case 'interrupt':
         this.interrupt('interrupt');
-        return;
-      case 'approve':
-        this.enqueue(() => this.approve(msg));
         return;
       case 'cancel':
         this.cancel();
@@ -358,7 +354,7 @@ export class VoiceConnection {
       type: 'ready',
       sessionId: session.id,
       member: { name: member.name, role: member.role },
-      place: { key: place.id, nickname: place.nickname },
+      place: { key: place.key, nickname: place.nickname },
     });
     this.setState('listening');
     for (const b of this.early) stt.sendAudio(b);
@@ -473,7 +469,7 @@ export class VoiceConnection {
     return {
       ...this.rt.api,
       approve: (hash, who) => this.rt.approve(hash, who),
-      voiceApprovalMaxPaise: this.rt.config.approvalMaxPaise,
+      pinRequiredAbovePaise: pinThreshold(this.rt.api),
       confirmWindowMs: this.rt.config.confirmWindowMs,
       clock: this.clock,
       maxTurns: this.rt.config.maxTurns,
@@ -523,7 +519,7 @@ export class VoiceConnection {
       },
       onCart: (c) => this.send({ type: 'cart', quote: c.quote, removed: c.removed }),
       onDecision: (d) => {
-        if (d.needsBiometric) session.biometric = { quoteHash: d.quoteHash, at: this.clock() };
+        if (d.needsPin) session.pinRequest = { quoteHash: d.quoteHash, at: this.clock() };
         this.send({ type: 'decision', ...d });
       },
       onOrder: (o) => this.send({ type: 'order', ...o }),
@@ -549,7 +545,7 @@ export class VoiceConnection {
     if (this.current === cur) this.current = undefined;
     // A question that was cut off (barge-in, superseded, disconnect) was not fully asked: no yes can answer it.
     if (cur.interrupted) session.pending = undefined;
-    if (!this.closed) this.setState(session.pending ? 'awaiting_confirmation' : 'listening');
+    this.settle();
 
     const telemetry: VoiceTurnTelemetry = {
       event: 'voice_turn',
@@ -570,83 +566,111 @@ export class VoiceConnection {
     this.logger.info(telemetry, 'voice_turn');
   }
 
-  // ---------- app-driven approvals ----------
+  // ---------- keypad (DTMF) PIN approvals ----------
 
-  private async approve(msg: Record<string, unknown>): Promise<void> {
+  /**
+   * Attach the call's keypad (telephony adapter, voice/keypad.ts). Digits typed while the session is awaiting a PIN
+   * approve the held quote through verifyPinForApproval → approveQuote. Returns the unsubscribe function.
+   */
+  attachKeypad(source: KeypadSource): () => void {
+    const off = source.onDigits((digits) => this.enqueue(() => this.keypad(digits)));
+    this.detachers.push(off);
+    return off;
+  }
+
+  private async keypad(digits: string): Promise<void> {
     const session = this.session;
     const member = this.member;
     if (!session || !member || this.closed) return;
-    const quoteHash = typeof msg.quoteHash === 'string' ? msg.quoteHash : '';
-    const refuse = (why: string) => {
-      this.logger.info({ event: 'voice_approve_refused', reason: why });
-      this.send({ type: 'error', code: 'approve_refused', message: why });
-    };
-    if (msg.biometric !== true) return refuse('Face ID is required.');
-    if (member.role !== 'owner') return refuse('Only an owner can approve payment.');
-    if (!session.authenticated) return refuse('This connection cannot approve payment.');
-    const asked = session.biometric;
-    if (!asked || asked.quoteHash !== quoteHash) return refuse('That cart is not waiting for approval.');
-    if (this.clock() - asked.at >= BIOMETRIC_WINDOW_MS) {
-      session.biometric = undefined;
-      return refuse('The approval window has passed; ask again.');
-    }
-    session.biometric = undefined;
-    session.pending = undefined;
     const lang = session.lang;
-    this.setState('thinking');
-    let out: ApprovalOutcome;
+    let res: KeypadResult;
+    if (session.pinRequest) this.setState('thinking');
     try {
-      out = await this.rt.approve(quoteHash, this.who);
+      res = await handleKeypadPin(session, member, digits, {
+        verifyPinForApproval: (id, d) => pinsOf(this.rt.api).verifyPinForApproval(id, d),
+        approve: (hash, who, factor) => this.rt.approve(hash, who, factor),
+        clock: this.clock,
+      });
     } catch (err) {
       this.logger.warn({
-        event: 'voice_approve_failed',
+        event: 'voice_keypad_failed',
         message: scrub(err instanceof Error ? err.message : String(err)),
       });
       this.send({ type: 'error', code: 'approve_failed', message: 'Approval failed; nothing was ordered.' });
+      this.settle();
       return;
     }
-    this.send({
-      type: 'decision',
-      verdict: out.decision.verdict,
-      reasons: out.decision.reasons,
-      quoteHash,
-      needsBiometric: false,
-      spokenConfirmation: false,
+    // Never log the digits: only the outcome.
+    this.logger.info({
+      event: 'voice_keypad',
+      outcome: res.kind,
+      ...(res.kind !== 'approved' ? { reason: res.reason } : {}),
     });
-    const placed = out.order !== undefined && (out.placed || out.alreadyPlaced === true);
-    if (placed) {
-      const eta = session.agent?.state.quotes
-        ? [...session.agent.state.quotes.values()].find((q) => q.hash === quoteHash)?.etaMinutes
-        : undefined;
-      this.send({
-        type: 'order',
-        supplierOrderId: out.order!.supplierOrderId,
-        status: out.order!.status,
-        ...(eta !== undefined ? { etaMinutes: eta } : {}),
-      });
+    if (res.kind === 'ignored') {
+      this.settle();
+      return;
     }
-    const reply = placed ? phrase('placed', lang) : phrase('failed', lang);
-    noteTurn(
-      session,
-      `[The owner ${placed ? 'approved the held cart with Face ID; it was placed' : 'approved with Face ID but the gate did not place it'}]`,
-      reply,
-    );
+    let reply: string;
+    if (res.kind === 'refused') {
+      reply = phrase(res.reason === 'locked' ? 'pinLocked' : res.reason === 'not_set' ? 'pinNotSet' : 'pinWrong', lang);
+      this.send({
+        type: 'error',
+        code: res.reason === 'locked' ? 'pin_locked' : res.reason === 'not_set' ? 'pin_not_set' : 'pin_incorrect',
+        message: reply,
+      });
+    } else {
+      const out = res.outcome;
+      this.send({
+        type: 'decision',
+        verdict: out.decision.verdict,
+        reasons: out.decision.reasons,
+        quoteHash: res.quoteHash,
+        needsPin: false,
+        spokenConfirmation: false,
+      });
+      const placed = out.order !== undefined && (out.placed || out.alreadyPlaced === true);
+      if (placed) {
+        const eta = session.agent?.state.quotes
+          ? [...session.agent.state.quotes.values()].find((q) => q.hash === res.quoteHash)?.etaMinutes
+          : undefined;
+        this.send({
+          type: 'order',
+          supplierOrderId: out.order!.supplierOrderId,
+          status: out.order!.status,
+          ...(eta !== undefined ? { etaMinutes: eta } : {}),
+        });
+      }
+      reply = placed ? phrase('placed', lang) : phrase('failed', lang);
+      noteTurn(
+        session,
+        `[The owner ${placed ? 'approved the held cart with the keypad PIN; it was placed' : 'entered the PIN but the gate did not place it'}]`,
+        reply,
+      );
+    }
     const turnId = `t${++this.turnSeq}`;
     const speaker = new Speaker(this, turnId, lang);
     for (const s of splitSentences(reply)) speaker.say(s);
     speaker.busy = false;
     await speaker.finished();
-    this.setState('listening');
+    this.settle();
+  }
+
+  /** The resting state after a turn or a keypad entry. */
+  private settle(): void {
+    const session = this.session;
+    if (!session || this.closed) return;
+    if (session.pinRequest && this.clock() - session.pinRequest.at >= PIN_WINDOW_MS) session.pinRequest = undefined;
+    this.setState(session.pinRequest ? 'awaiting_pin' : session.pending ? 'awaiting_confirmation' : 'listening');
   }
 
   private cancel(): void {
     const session = this.session;
     if (!session) return;
-    const had = session.pending !== undefined || session.biometric !== undefined;
+    const had = session.pending !== undefined || session.pinRequest !== undefined;
     session.pending = undefined;
-    session.biometric = undefined;
+    session.pinRequest = undefined;
     if (had) noteTurn(session, '[The user cancelled the pending cart]', phrase('cancelled', session.lang));
-    if (session.state === 'awaiting_confirmation') this.setState('listening');
+    if (session.state === 'awaiting_confirmation' || session.state === 'awaiting_pin') this.setState('listening');
   }
 
   // ---------- teardown ----------
@@ -667,6 +691,7 @@ export class VoiceConnection {
       this.current.abort.abort();
       this.current.speaker.stop();
     }
+    for (const off of this.detachers.splice(0)) off();
     this.stt?.close();
     this.dropTts();
     this.session?.detach(this.clock());
@@ -678,6 +703,10 @@ export function placeByHint(household: Household, hint: string): Place | undefin
   const h = normalisePhrase(hint);
   if (h === '') return undefined;
   return household.places.find(
-    (p) => p.id === hint || normalisePhrase(p.nickname) === h || p.aliases.some((a) => normalisePhrase(a) === h),
+    (p) =>
+      p.id === hint ||
+      p.key === hint ||
+      normalisePhrase(p.nickname) === h ||
+      p.aliases.some((a) => normalisePhrase(a) === h),
   );
 }

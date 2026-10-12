@@ -9,11 +9,12 @@
 import type { FastifyInstance } from 'fastify';
 import type WebSocket from 'ws';
 import { approveQuote } from '../api/routes/approve.js';
-import { authenticateMember } from '../api/auth.js';
-import type { ApiDeps } from '../api/http.js';
+import { authenticateMember, authenticateSession, type AuthedMember } from '../api/auth.js';
+import { webOf, type ApiDeps } from '../api/http.js';
 import type { VoiceConfig } from './config.js';
 import { VoiceConnection, type VoiceRuntime } from './connection.js';
 import { sharedFillers, type FillerCache } from './fillers.js';
+import type { KeypadSource } from './keypad.js';
 import type { WebSocketFactory } from './sarvam.js';
 import { SessionRegistry } from './session.js';
 
@@ -26,6 +27,11 @@ export interface VoiceOptions {
   /** Wall clock in ms (Date.now). */
   clock?: () => number;
   helloTimeoutMs?: number;
+  /**
+   * The phone keypad for this member's connection, if the session is a phone call (telephony adapter; provider not
+   * chosen yet). Digits typed there approve a held quote above the PIN threshold (voice/keypad.ts).
+   */
+  keypadFor?: (who: AuthedMember) => KeypadSource | undefined;
 }
 
 export const CLOSE_UNAUTHORISED = 4401;
@@ -42,7 +48,12 @@ export function registerVoiceRoute(app: FastifyInstance, deps: ApiDeps): void {
     const buffer = (data: WebSocket.RawData, isBinary: boolean) => early.push([data, isBinary]);
     socket.on('message', buffer);
 
-    const who = await authenticateMember(deps.store, req.headers.authorization);
+    // Member token (iPhone app, CLI), else the web app's session cookie — only from the web app's own origin.
+    const who =
+      (await authenticateMember(deps.store, req.headers.authorization)) ??
+      (req.headers.origin === webOf(deps).origin
+        ? await authenticateSession(deps, req.headers.cookie).then((s) => s?.who)
+        : undefined);
     if (!who) {
       socket.close(CLOSE_UNAUTHORISED, 'unauthorised');
       return;
@@ -69,13 +80,15 @@ export function registerVoiceRoute(app: FastifyInstance, deps: ApiDeps): void {
       sarvam,
       sessions,
       fillers: opts.fillers ?? sharedFillers,
-      approve: (hash, member) => approveQuote(deps, hash, member),
+      approve: (hash, member, factor) => approveQuote(deps, hash, member, factor),
       ...(opts.wsFactory ? { wsFactory: opts.wsFactory } : {}),
       ...(opts.clock ? { clock: opts.clock } : {}),
       ...(opts.helloTimeoutMs !== undefined ? { helloTimeoutMs: opts.helloTimeoutMs } : {}),
     };
     const conn = new VoiceConnection(socket, who, runtime, req.log);
     live.set(who.memberId, conn);
+    const keypad = opts.keypadFor?.(who);
+    if (keypad) conn.attachKeypad(keypad);
     socket.on('close', () => {
       if (live.get(who.memberId) === conn) live.delete(who.memberId);
     });

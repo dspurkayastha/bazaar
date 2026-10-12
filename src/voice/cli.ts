@@ -395,7 +395,7 @@ async function chat(a: Args): Promise<void> {
       }
       case 'decision':
         console.log(
-          `${at} gate: ${String(m.verdict)}${m.needsBiometric ? ' (needs Face ID)' : ''}${m.spokenConfirmation ? ' (say yes to confirm)' : ''}`,
+          `${at} gate: ${String(m.verdict)}${m.needsPin ? ' (needs PIN)' : ''}${m.spokenConfirmation ? ' (say yes to confirm)' : ''}`,
         );
         break;
       case 'order':

@@ -342,7 +342,9 @@ export class DbStore implements Store {
         if (m.phones.length > 0) {
           await tx
             .insert(memberPhones)
-            .values(m.phones.map((phone, position) => ({ householdId: m.householdId, phone, memberId: m.id, position })));
+            .values(
+              m.phones.map((phone, position) => ({ householdId: m.householdId, phone, memberId: m.id, position })),
+            );
         }
       });
     } catch (err) {
