@@ -21,6 +21,7 @@
     "db:seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.4",
     "postgres": "3.4.9",
