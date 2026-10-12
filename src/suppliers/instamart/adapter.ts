@@ -43,6 +43,29 @@ export interface InstamartAdapterOptions {
   log?: SanitiseLog;
 }
 
+/** A saved supplier address, as offered for one-tap import into a place (GET /api/household/supplier-addresses). */
+export interface SupplierAddress {
+  /** Byte-for-byte as the supplier sent it: becomes Place.supplierAddressIds.instamart. */
+  id: string;
+  /** e.g. "Home", "Work" (sanitised). */
+  tag: string;
+  /** e.g. "Friends & Family" (sanitised). */
+  category: string;
+  /** Sanitised address line. */
+  addressLine: string;
+}
+
+/** Suppliers that can list the account's saved addresses. */
+export interface AddressBook {
+  getAddresses(): Promise<SupplierAddress[]>;
+}
+
+export function hasAddressBook(s: unknown): s is AddressBook {
+  return typeof (s as Partial<AddressBook> | null)?.getAddresses === 'function';
+}
+
+const MAX_ADDRESS_PAGES = 5;
+
 export interface PaymentMethodOption {
   /** Byte-for-byte as the server sent it; pass to checkout as intentApp. */
   id: string;
@@ -596,6 +619,38 @@ export class InstamartSupplier implements Supplier {
 
   async clearCart(): Promise<void> {
     await this.call('clear_cart', {});
+  }
+
+  /**
+   * The account's saved delivery addresses (get_addresses, all pages), sanitised: id byte-for-byte, tag / category /
+   * address line through core/sanitise.ts. Phone numbers (even masked) are dropped and never leave this module.
+   */
+  async getAddresses(): Promise<SupplierAddress[]> {
+    const out: SupplierAddress[] = [];
+    const seen = new Set<string>();
+    for (let page = 1; page <= MAX_ADDRESS_PAGES; page++) {
+      const raw = await this.call('get_addresses', { page, pageSize: 10 });
+      const root = isObj(raw) ? raw : {};
+      for (const a of arr(root.addresses)) {
+        if (!isObj(a)) continue;
+        const id = str(a.id);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const field = (k: string) => {
+          const v = str(a[k]);
+          return v === undefined ? '' : sanitiseField(v, `${ID}:address:${id}.${k}`, this.log);
+        };
+        out.push({
+          id,
+          tag: field('addressTag'),
+          category: field('addressCategory'),
+          addressLine: field('addressLine'),
+        });
+      }
+      const pg = isObj(root.pagination) ? root.pagination : {};
+      if (pg.hasMore !== true) break;
+    }
+    return out;
   }
 
   /** The parsed get_payment_options result; the agent needs the UPI method ids (exact bytes) for place(). */

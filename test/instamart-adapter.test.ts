@@ -578,6 +578,48 @@ describe('payment options, track, orders', () => {
   });
 });
 
+describe('getAddresses (saved addresses for place import)', () => {
+  it('maps the real get_addresses shape to {id, tag, category, addressLine}, drops phones, sanitises text', async () => {
+    const log = new SanitiseLog();
+    const tool = standardTool({ get_addresses: fixture('get_addresses_household') });
+    const list = await supplier(tool, log).getAddresses();
+    expect(list).toHaveLength(4);
+    expect(list[2]).toEqual({
+      id: 'd9icgks1d96hnppuqtjg__AXolagWIBcs7fofoMCfq9g',
+      tag: 'Work',
+      category: 'Friends & Family',
+      addressLine: "MASKED, Rahul's House, Silchar",
+    });
+    expect(JSON.stringify(list)).not.toMatch(/4629|1187|phone/i);
+    expect(list[3]!.addressLine).not.toMatch(/ignore previous/i);
+    expect(log.count).toBeGreaterThan(0);
+    expect(tool.calls[0]).toEqual({ name: 'get_addresses', args: { page: 1, pageSize: 10 } });
+  });
+
+  it('follows pagination.hasMore and de-duplicates', async () => {
+    const page = (n: number, hasMore: boolean) => ({
+      addresses: [
+        {
+          id: `a${n}`,
+          addressLine: `line ${n}`,
+          phoneNumber: '****0000',
+          addressCategory: 'Other',
+          addressTag: `t${n}`,
+        },
+        { id: 'a1', addressLine: 'dup' },
+      ],
+      total: 3,
+      pagination: { page: n, pageSize: 2, total: 3, totalPages: 2, hasMore },
+    });
+    const tool = standardTool({
+      get_addresses: (args: Record<string, unknown>) => page(args.page as number, args.page === 1),
+    });
+    const list = await supplier(tool).getAddresses();
+    expect(list.map((a) => a.id)).toEqual(['a1', 'a2']);
+    expect(tool.count('get_addresses')).toBe(2);
+  });
+});
+
 describe('quote type sanity', () => {
   it('is a complete Quote', async () => {
     const q: Quote = await supplier(standardTool()).quote(LINES, HOME);
