@@ -7,3 +7,4 @@ docs
 CLAUDE.md
 src/core/types.ts
 .claude/
+web/

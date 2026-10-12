@@ -7,7 +7,10 @@
  *   DATABASE_URL       Postgres (needs BAZAAR_HOUSEHOLD_ID); unset = in-memory store seeded with the founding household
  *   BAZAAR_SUPPLIERS   comma list of supplier ids, default "stub"; e.g. "instamart" (needs TOKEN_ENC_KEY + pnpm auth:instamart)
  *   PORT / HOST        default 8787 / 127.0.0.1
- *   SARVAM_API_KEY     enables /voice (docs/VOICE_PROTOCOL.md); SARVAM_* and VOICE_APPROVAL_MAX_RUPEES tune it
+ *   SARVAM_API_KEY     enables /voice (docs/VOICE_PROTOCOL.md); SARVAM_* tune it
+ *   WEB_ORIGIN / WEBAUTHN_RP_ID   the web app's origin and passkey RP id (docs/WEB_API.md); default http://localhost
+ *   PIN_REQUIRED_ABOVE_RUPEES     approvals above this need the owner's PIN on every channel (default 500)
+ *   WEB_DIST           the built web app served at / (default web/dist; build with pnpm web:build)
  */
 import 'dotenv/config';
 import { MemoryStore } from './agent/memory-store.js';
@@ -15,6 +18,8 @@ import type { Store } from './agent/store.js';
 import { anthropicClient } from './agent/llm.js';
 import { issueMemberToken } from './api/auth.js';
 import { buildServer } from './api/server.js';
+import { parsePinThreshold, webConfigFromEnv } from './api/web-config.js';
+import { createSetupLink } from './auth/session.js';
 import type { Supplier } from './core/types.js';
 import { createDb } from './db/client.js';
 import { foundingHousehold } from './db/seed-data.js';
@@ -33,6 +38,10 @@ async function loadSuppliers(): Promise<Supplier[]> {
 async function main(): Promise<void> {
   const apiToken = process.env.BAZAAR_API_TOKEN ?? '';
   if (!apiToken) throw new Error('BAZAAR_API_TOKEN is not set (see .env.example)');
+
+  const web = webConfigFromEnv();
+  const pinRequiredAbovePaise = parsePinThreshold(process.env.PIN_REQUIRED_ABOVE_RUPEES);
+  if (!process.env.WEB_ORIGIN) console.warn(`WEB_ORIGIN not set: passkeys work only on ${web.origin} (local dev).`);
 
   let store: Store;
   let defaultHouseholdId: string;
@@ -53,6 +62,15 @@ async function main(): Promise<void> {
     for (const m of household.members) {
       console.warn(`  ${m.name} (${m.role}, ${m.id}): ${await issueMemberToken(memory, m.id)}`);
     }
+    for (const m of household.members.filter((x) => x.role === 'owner')) {
+      const link = await createSetupLink(memory, {
+        memberId: m.id,
+        householdId: household.id,
+        origin: web.origin,
+        now: new Date().toISOString(),
+      });
+      console.warn(`Passkey setup link for ${m.name} (this run only): ${link.url}`);
+    }
   }
 
   const webhookSecret = process.env.WHATSAPP_WEBHOOK_SECRET ?? '';
@@ -69,6 +87,8 @@ async function main(): Promise<void> {
       apiToken,
       ...(webhookSecret ? { webhookSecret } : {}),
       defaultHouseholdId,
+      web,
+      pinRequiredAbovePaise,
       voice: { config: voice },
     },
     { logger: true },

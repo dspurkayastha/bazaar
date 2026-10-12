@@ -20,6 +20,8 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
     "member:token": "tsx scripts/member-token.ts",
+    "member:setup-link": "tsx scripts/member-setup-link.ts",
+    "web:build": "tsx scripts/web-build.ts",
     "auth:instamart": "tsx scripts/auth-instamart.ts",
     "voice:test": "tsx src/voice/cli.ts test",
     "voice:say": "tsx src/voice/cli.ts say",

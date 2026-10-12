@@ -36,6 +36,7 @@ describe('passkey boundary (real @simplewebauthn/server verification, software a
     expect(regOpts.rp.id).toBe(RP);
     expect(regOpts.authenticatorSelection).toMatchObject({ residentKey: 'required', userVerification: 'required' });
     const passkey = await auth.verifyRegistration(dev, 'sc_1', device.register(regOpts));
+    await store.savePasskey(passkey);
     expect(passkey.memberId).toBe(dev.id);
     expect(await store.listPasskeys(dev.id)).toHaveLength(1);
 
@@ -49,16 +50,20 @@ describe('passkey boundary (real @simplewebauthn/server verification, software a
   });
 
   it('a challenge is single use: replaying an assertion fails', async () => {
-    const { auth, device, dev } = setup();
-    await auth.verifyRegistration(dev, 'sc_1', device.register(await auth.registrationOptions(dev, 'sc_1')));
+    const { auth, device, dev, store } = setup();
+    await store.savePasskey(
+      await auth.verifyRegistration(dev, 'sc_1', device.register(await auth.registrationOptions(dev, 'sc_1'))),
+    );
     const assertion = device.assert(await auth.authenticationOptions());
     await auth.verifyAuthentication(assertion);
     await rejects(auth.verifyAuthentication(assertion), 'challenge_expired');
   });
 
   it('challenges expire after 5 minutes', async () => {
-    const { auth, device, dev, clock } = setup();
-    await auth.verifyRegistration(dev, 'sc_1', device.register(await auth.registrationOptions(dev, 'sc_1')));
+    const { auth, device, dev, clock, store } = setup();
+    await store.savePasskey(
+      await auth.verifyRegistration(dev, 'sc_1', device.register(await auth.registrationOptions(dev, 'sc_1'))),
+    );
     const opts = await auth.authenticationOptions();
     clock.advance(CHALLENGE_TTL_MS);
     await rejects(auth.verifyAuthentication(device.assert(opts)), 'challenge_expired');
@@ -80,7 +85,7 @@ describe('passkey boundary (real @simplewebauthn/server verification, software a
   });
 
   it('wrong origin, missing user verification, unknown credential and a forged user handle all fail', async () => {
-    const { auth, device, dev, h } = setup();
+    const { auth, device, dev, h, store } = setup();
     const phished = new SoftAuthenticator(RP, ORIGIN);
     await rejects(
       auth.verifyRegistration(
@@ -90,7 +95,9 @@ describe('passkey boundary (real @simplewebauthn/server verification, software a
       ),
       'registration_failed',
     );
-    await auth.verifyRegistration(dev, 'sc_1', device.register(await auth.registrationOptions(dev, 'sc_1')));
+    await store.savePasskey(
+      await auth.verifyRegistration(dev, 'sc_1', device.register(await auth.registrationOptions(dev, 'sc_1'))),
+    );
     await rejects(
       auth.verifyAuthentication(device.assert(await auth.authenticationOptions(), { origin: 'https://evil.example' })),
       'assertion_failed',
@@ -109,8 +116,10 @@ describe('passkey boundary (real @simplewebauthn/server verification, software a
   });
 
   it('a tampered signature fails; malformed bodies are 400s', async () => {
-    const { auth, device, dev } = setup();
-    await auth.verifyRegistration(dev, 'sc_1', device.register(await auth.registrationOptions(dev, 'sc_1')));
+    const { auth, device, dev, store } = setup();
+    await store.savePasskey(
+      await auth.verifyRegistration(dev, 'sc_1', device.register(await auth.registrationOptions(dev, 'sc_1'))),
+    );
     const a = device.assert(await auth.authenticationOptions());
     const sig = Buffer.from(a.response.signature, 'base64url');
     sig[sig.length - 1]! ^= 1;
@@ -121,10 +130,10 @@ describe('passkey boundary (real @simplewebauthn/server verification, software a
   });
 
   it('the same credential cannot be registered twice', async () => {
-    const { auth, device, dev } = setup();
+    const { auth, device, dev, store } = setup();
     const opts = await auth.registrationOptions(dev, 'sc_1');
     const reg = device.register(opts);
-    await auth.verifyRegistration(dev, 'sc_1', reg);
+    await store.savePasskey(await auth.verifyRegistration(dev, 'sc_1', reg));
     // replay the same registration with a fresh challenge baked in: still the same credential id
     const opts2 = await auth.registrationOptions(dev, 'sc_1');
     expect(opts2.excludeCredentials?.map((c) => c.id)).toEqual([reg.id]);

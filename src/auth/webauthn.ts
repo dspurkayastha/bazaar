@@ -124,7 +124,10 @@ export class PasskeyAuth {
     return options;
   }
 
-  /** Verify a registration made with options from `registrationOptions(member, setupId)`; stores the passkey. */
+  /**
+   * Verify a registration made with options from `registrationOptions(member, setupId)`. Returns the passkey to
+   * store; the caller saves it once it has consumed the setup code (single use).
+   */
   async verifyRegistration(member: { id: string }, setupId: string, raw: unknown): Promise<PasskeyRecord> {
     if (!shape(raw, ['clientDataJSON', 'attestationObject']))
       throw new PasskeyError(400, 'bad_registration', 'registration response is malformed');
@@ -159,7 +162,6 @@ export class PasskeyAuth {
       backedUp: info.credentialBackedUp,
       createdAt: this.now(),
     };
-    await this.store.savePasskey(passkey);
     return passkey;
   }
 
