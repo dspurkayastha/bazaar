@@ -4,11 +4,11 @@
  *
  * Every rule is evaluated (no short-circuit) so `reasons` lists every breach.
  * Verdict = BLOCK if any BLOCK rule fires; else HOLD if any HOLD rule fires and no valid owner approval
- * covers the quote hash; else PAY. A valid approval turns HOLD into PAY but never overrides BLOCK.
+ * covers the quote (exact quote hash, or for scheduled approvals the line hash plus conditions); else PAY. A valid approval turns HOLD into PAY but never overrides BLOCK.
  * Content rules (amounts, categories, quantities) are evaluated on the union of the quote and the live cart,
  * so nothing that will actually be paid escapes them.
  */
-import { quoteHash } from '../core/hash.js';
+import { lineHash, quoteHash } from '../core/hash.js';
 import { formatINR } from '../core/money.js';
 import type { Approval, PolicyContext, PolicyDecision, PolicyVerdict, QuoteLine } from '../core/types.js';
 
@@ -25,6 +25,7 @@ export const RULES = {
   placeUntrusted: 'place_untrusted',
   approvalMismatch: 'approval_mismatch',
   approvalExpired: 'approval_expired',
+  approvalConsumed: 'approval_consumed',
   scheduledConditions: 'scheduled_conditions',
 } as const;
 
@@ -42,6 +43,7 @@ type ApprovalStatus =
   | { kind: 'other_hash' }
   | { kind: 'not_owner' }
   | { kind: 'expired' }
+  | { kind: 'consumed' }
   | { kind: 'conditions_failed'; detail: string };
 
 function time(iso: string, label: string): number {
@@ -50,8 +52,12 @@ function time(iso: string, label: string): number {
   return t;
 }
 
-/** The profile item key a supplier line belongs to (via learned supplier hints), else the variant id. */
-export function itemKeyForLine(ctx: PolicyContext, line: Pick<QuoteLine, 'variantId' | 'skuId'>): string {
+/**
+ * The profile item key a supplier line belongs to: the line's own itemKey when the quote carries one,
+ * else via learned supplier hints, else the variant id.
+ */
+export function itemKeyForLine(ctx: PolicyContext, line: Pick<QuoteLine, 'variantId' | 'skuId' | 'itemKey'>): string {
+  if (line.itemKey) return line.itemKey;
   const supplierId = ctx.quote.supplierId;
   for (const d of ctx.household.profile.defaults) {
     const hint = d.supplierHints?.[supplierId];
@@ -61,23 +67,42 @@ export function itemKeyForLine(ctx: PolicyContext, line: Pick<QuoteLine, 'varian
   return line.variantId;
 }
 
+/** A line-bound (scheduled) approval binds to the sorted lines via conditions.lineHash, not the quote hash. */
+export function isLineBound(a: Approval): boolean {
+  return a.conditions?.lineHash !== undefined;
+}
+
+function boundToThisQuote(ctx: PolicyContext, a: Approval): boolean {
+  const lh = a.conditions?.lineHash;
+  if (lh !== undefined) return lineHash(ctx.quote.lines) === lh && lineHash(ctx.liveCart.lines) === lh;
+  return a.quoteHash === ctx.quote.hash && a.quoteHash === ctx.liveCart.hash;
+}
+
 function classifyApproval(ctx: PolicyContext, a: Approval, nowMs: number): ApprovalStatus {
-  if (a.quoteHash !== ctx.quote.hash || a.quoteHash !== ctx.liveCart.hash) return { kind: 'other_hash' };
+  if (!boundToThisQuote(ctx, a)) return { kind: 'other_hash' };
   const member = ctx.household.members.find((m) => m.id === a.memberId);
   if (!member || member.role !== 'owner') return { kind: 'not_owner' };
+  // Approvals are single-use. The gate filters consumed ones out; the engine refuses them too.
+  if (a.consumedAt !== undefined) return { kind: 'consumed' };
   if (nowMs >= time(a.expiresAt, 'approval.expiresAt') || nowMs < time(a.createdAt, 'approval.createdAt')) {
     return { kind: 'expired' };
   }
   const c = a.conditions;
   if (c) {
+    const lineBound = c.lineHash !== undefined;
     const failed: string[] = [];
     if (c.notBefore !== undefined && nowMs < time(c.notBefore, 'conditions.notBefore')) {
       failed.push(`not before ${c.notBefore}`);
     }
-    if (c.maxTotal !== undefined && ctx.liveCart.total > c.maxTotal) {
-      failed.push(`total ${formatINR(ctx.liveCart.total)} > approved max ${formatINR(c.maxTotal)}`);
+    if (c.maxTotal !== undefined) {
+      const total = Math.max(ctx.quote.total, ctx.liveCart.total);
+      if (total > c.maxTotal) failed.push(`total ${formatINR(total)} > approved max ${formatINR(c.maxTotal)}`);
+    } else if (lineBound) {
+      // Without a ceiling a line-bound approval would cover any price; refuse rather than guess.
+      failed.push('line-bound approval has no maxTotal');
     }
-    if (c.inStock && (ctx.liveCart.unavailable.length > 0 || ctx.quote.unavailable.length > 0)) {
+    // Line-bound approvals always require every line in stock; hash-bound ones only when asked.
+    if ((lineBound || c.inStock) && (ctx.liveCart.unavailable.length > 0 || ctx.quote.unavailable.length > 0)) {
       const keys = [...ctx.quote.unavailable, ...ctx.liveCart.unavailable].map((u) => u.itemKey);
       failed.push(`items unavailable: ${[...new Set(keys)].join(', ')}`);
     }
@@ -182,7 +207,7 @@ export function decide(ctx: PolicyContext): PolicyDecision {
 
   // --- Approvals ---
   const statuses = ctx.approvals.map((a) => ({ a, s: classifyApproval(ctx, a, nowMs) }));
-  // An owner's conditions on this exact hash are binding: if they fail, hold, never substitute.
+  // An owner's conditions on an approval bound to this quote are binding: if they fail, hold, never substitute.
   for (const { a, s } of statuses) {
     if (s.kind === 'conditions_failed') hold(RULES.scheduledConditions, `approval ${a.id}: ${s.detail}`);
   }
@@ -194,10 +219,14 @@ export function decide(ctx: PolicyContext): PolicyDecision {
   if (!anyBlock && anyHold && !valid) {
     // Explain why no approval lifted the hold.
     if (statuses.length > 0 && statuses.every((x) => x.s.kind === 'other_hash')) {
-      hold(RULES.approvalMismatch, `no approval is bound to quote hash ${quote.hash.slice(0, 12)}`);
+      hold(
+        RULES.approvalMismatch,
+        `no approval is bound to quote hash ${quote.hash.slice(0, 12)} or line hash ${lineHash(quote.lines).slice(0, 12)}`,
+      );
     }
     for (const { a, s } of statuses) {
       if (s.kind === 'expired') hold(RULES.approvalExpired, `approval ${a.id} expired at ${a.expiresAt}`);
+      if (s.kind === 'consumed') hold(RULES.approvalConsumed, `approval ${a.id} was already used at ${a.consumedAt}`);
       if (s.kind === 'not_owner') hold(RULES.role, `approval ${a.id} is not from an owner`);
     }
   }
