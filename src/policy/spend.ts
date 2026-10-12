@@ -2,8 +2,11 @@
  * Pure helpers that sum ledger spend for "today" and "this month" in the household's timezone.
  * Day and month boundaries are local (Asia/Kolkata by default), not UTC: an order at 23:30 UTC on the 31st
  * is already the 1st in IST.
+ *
+ * Per the CONTRACTS.md amendment: the daily cap counts unattended orders only (gate PAY with no approval);
+ * the monthly cap counts every placed order, whoever or whatever placed it.
  */
-import type { ISODateTime, Paise } from '../core/types.js';
+import type { ISODateTime, Paise, PolicyDecision } from '../core/types.js';
 
 export const DEFAULT_TIMEZONE = 'Asia/Kolkata';
 
@@ -11,6 +14,13 @@ export interface SpendRow {
   placedAt: ISODateTime;
   total: Paise;
   status: string;
+  /** The gate decision that placed this order; absent for orders placed outside Bazaar (ingested history). */
+  decision?: Pick<PolicyDecision, 'verdict' | 'approvalId'> | null;
+}
+
+/** Placed by the gate on PAY without any approval. Orders placed in the app by a human are not unattended. */
+export function isUnattended(row: Pick<SpendRow, 'decision'>): boolean {
+  return row.decision?.verdict === 'PAY' && !row.decision.approvalId;
 }
 
 /** Orders that did not (or will not) move money. Pending payments count: money in flight still counts to caps. */
@@ -78,4 +88,19 @@ export function spendThisMonth<R extends SpendRow>(
   const tz = opts.tz ?? DEFAULT_TIMEZONE;
   const month = localMonth(now, tz);
   return sumWhere(rows, (r) => localMonth(r.placedAt, tz) === month, opts.where);
+}
+
+/**
+ * The two numbers PolicyContext needs, with the amended semantics:
+ * spendToday = unattended orders placed today; spendThisMonth = every placed order this month.
+ */
+export function capSpend(
+  rows: readonly SpendRow[],
+  now: ISODateTime,
+  tz: string = DEFAULT_TIMEZONE,
+): { spendToday: Paise; spendThisMonth: Paise } {
+  return {
+    spendToday: spendToday(rows, now, { tz, where: isUnattended }),
+    spendThisMonth: spendThisMonth(rows, now, { tz }),
+  };
 }

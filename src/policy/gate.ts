@@ -18,6 +18,7 @@ import type {
   Quote,
   Supplier,
 } from '../core/types.js';
+import { unconsumed } from './context.js';
 import { decide } from './engine.js';
 
 export interface GateContextBuilder {
@@ -38,13 +39,27 @@ export interface GateRecord {
   quote: Quote;
   liveCart: Quote;
   decision: PolicyDecision;
+  /** The approval that lifted a HOLD, if any. Absent on HOLD/BLOCK and on unattended PAY. */
+  approvalId?: string;
+  /** True when an approval was used to pay. */
+  approvalUsed: boolean;
+  /** PAY with no approval: counts toward the daily unattended cap. */
+  unattended: boolean;
+  evaluatedAt: string;
+}
+
+export interface PlacedRecord extends GateRecord {
+  order: PlacedOrder;
+  /** When set, the recorder MUST mark this approval consumed (approvals are single-use). */
+  consumeApprovalId?: string;
 }
 
 /** Injected persistence for the ledger. Implementations append; they never decide. */
 export interface DecisionRecorder {
+  /** Every evaluation, before anything is placed. Throwing here aborts the gate (fail closed). */
   recordDecision(record: GateRecord): void | Promise<void>;
-  /** Called after a successful place (e.g. to mark the approval consumed and append the ledger order). */
-  recordPlaced?(record: GateRecord & { order: PlacedOrder }): void | Promise<void>;
+  /** After a successful place: append the ledger order and mark `consumeApprovalId` consumed. */
+  recordPlaced(record: PlacedRecord): void | Promise<void>;
 }
 
 export interface PlaceWithGateInput {
@@ -84,9 +99,11 @@ export async function placeWithGate({
   if (built.quote.supplierId !== supplier.id) {
     throw new BazaarError('GATE_CONTEXT', `quote is for ${built.quote.supplierId}, not ${supplier.id}`);
   }
-  const ctx: PolicyContext = { ...built, liveCart };
+  // Approvals are single-use: whatever the builder passed, consumed ones never reach the engine.
+  const ctx: PolicyContext = { ...built, liveCart, approvals: unconsumed(built.approvals) };
   const decision = decide(ctx);
 
+  const approvalUsed = decision.verdict === 'PAY' && decision.approvalId !== undefined;
   const record: GateRecord = {
     householdId: ctx.household.id,
     placeId: ctx.place.id,
@@ -94,6 +111,10 @@ export async function placeWithGate({
     quote: ctx.quote,
     liveCart,
     decision,
+    ...(approvalUsed ? { approvalId: decision.approvalId } : {}),
+    approvalUsed,
+    unattended: decision.verdict === 'PAY' && !approvalUsed,
+    evaluatedAt: decision.evaluatedAt,
   };
   await recorder.recordDecision(record);
 
@@ -107,7 +128,11 @@ export async function placeWithGate({
     // Never retry checkout here: a network error may still have placed the order (double-charge risk).
     throw asSupplierError(supplier, 'place', err);
   }
-  await recorder.recordPlaced?.({ ...record, order });
+  await recorder.recordPlaced({
+    ...record,
+    order,
+    ...(record.approvalId !== undefined ? { consumeApprovalId: record.approvalId } : {}),
+  });
   return { decision, order };
 }
 

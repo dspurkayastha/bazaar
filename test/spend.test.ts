@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { countsAsSpend, localDate, localMonth, spendThisMonth, spendToday } from '../src/policy/spend.js';
+import {
+  capSpend,
+  countsAsSpend,
+  isUnattended,
+  localDate,
+  localMonth,
+  spendThisMonth,
+  spendToday,
+} from '../src/policy/spend.js';
 
 const rows = [
   // 31 Oct 23:00 IST = 31 Oct 17:30 UTC → October
@@ -42,6 +50,26 @@ describe('spend helpers (Asia/Kolkata)', () => {
   it('supports an extra filter (e.g. unattended only)', () => {
     const tagged = rows.map((r, i) => ({ ...r, approved: i === 2 }));
     expect(spendToday(tagged, '2026-11-01T06:30:00.000Z', { where: (r) => !r.approved })).toBe(41200);
+  });
+
+  it('capSpend: daily counts unattended gate orders only; monthly counts every placed order', () => {
+    const now = '2026-11-01T06:30:00.000Z';
+    const mixed = [
+      { placedAt: '2026-11-01T03:00:00.000Z', total: 30000, status: 'placed', decision: { verdict: 'PAY' as const } },
+      {
+        placedAt: '2026-11-01T03:10:00.000Z',
+        total: 112300,
+        status: 'placed',
+        decision: { verdict: 'PAY' as const, approvalId: 'ap_1' },
+      },
+      { placedAt: '2026-11-01T04:00:00.000Z', total: 50000, status: 'DELIVERED' }, // placed in the app
+      { placedAt: '2026-11-01T04:30:00.000Z', total: 9900, status: 'CANCELLED', decision: { verdict: 'PAY' as const } },
+      { placedAt: '2026-10-31T04:00:00.000Z', total: 20000, status: 'placed', decision: { verdict: 'PAY' as const } },
+    ];
+    expect(isUnattended(mixed[0]!)).toBe(true);
+    expect(isUnattended(mixed[1]!)).toBe(false);
+    expect(isUnattended(mixed[2]!)).toBe(false);
+    expect(capSpend(mixed, now)).toEqual({ spendToday: 30000, spendThisMonth: 30000 + 112300 + 50000 });
   });
 
   it('counts pending payments but not failed, cancelled or refunded orders', () => {

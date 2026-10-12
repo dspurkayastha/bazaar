@@ -106,6 +106,8 @@ export class StubSupplier implements Supplier {
   private cart: ServerCartLine[] = [];
   private cartAddressId: string | undefined;
   private drift: CartDrift | undefined;
+  /** Item keys from the last quote request, carried onto quote lines (the real supplier never sees them). */
+  private readonly itemKeys = new Map<string, string>();
 
   /** Every successful place() call, for assertions. */
   readonly placed: { quote: Quote; payment: PaymentMethod; order: PlacedOrder }[] = [];
@@ -204,6 +206,8 @@ export class StubSupplier implements Supplier {
       else next.push({ variantId: l.variantId, quantity: l.quantity });
     }
     // update_cart semantics: replace the whole cart.
+    this.itemKeys.clear();
+    for (const l of lines) if (l.reason.itemKey) this.itemKeys.set(l.variantId, l.reason.itemKey);
     this.cart = next;
     this.cartAddressId = addressId;
     return this.price(this.cart, place, addressId, unavailable);
@@ -302,7 +306,9 @@ export class StubSupplier implements Supplier {
     const quoteLines: QuoteLine[] = lines.map((l) => {
       const { product, variant } = this.find(l.variantId);
       const unitPrice = this.prices.get(l.variantId)!;
+      const itemKey = this.itemKeys.get(l.variantId);
       return {
+        ...(itemKey !== undefined ? { itemKey } : {}),
         variantId: l.variantId,
         ...(variant.skuId !== undefined ? { skuId: variant.skuId } : {}),
         name: product.name,
