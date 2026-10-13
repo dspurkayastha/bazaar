@@ -1,3 +1,6 @@
+import { isSampleMode } from './sample/mode';
+import { sampleRequest } from './sample/router';
+
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -44,6 +47,8 @@ export async function api<T = unknown>(
   body?: unknown,
   opts: { auth?: boolean } = {},
 ): Promise<T> {
+  // Preview hosts (anything but production and localhost) run on sample data and never touch the network.
+  if (isSampleMode()) return sampleRequest<T>(method, path);
   const headers: Record<string, string> = {};
   if (method !== 'GET') headers['X-Bazaar'] = '1';
   if (body !== undefined) headers['Content-Type'] = 'application/json';

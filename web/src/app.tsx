@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'preact/hooks';
 import { ApiError, get, post, setUnauthorizedHandler } from './api';
 import { TabBar, type Tab } from './components/TabBar';
 import { MeContext } from './me';
+import { SampleChrome } from './sample/Chrome';
+import { isSampleMode } from './sample/mode';
+import { PREVIEW_ONLY, showToast } from './sample/toast';
 import { Login, Setup } from './screens/Auth';
 import { Carts } from './screens/Carts';
 import { Household } from './screens/Household';
@@ -22,7 +25,7 @@ export function setupCodeFromPath(path: string): string | null {
 }
 
 export function App() {
-  const [setupCode, setSetupCode] = useState(() => setupCodeFromPath(location.pathname));
+  const [setupCode, setSetupCode] = useState(() => (isSampleMode() ? null : setupCodeFromPath(location.pathname)));
   const [me, setMe] = useState<Me | null>(null);
   const [status, setStatus] = useState<'loading' | 'anon' | 'in' | 'error'>('loading');
   const [tab, setTab] = useState<Tab>(tabFromHash);
@@ -84,6 +87,7 @@ export function App() {
   };
 
   const signOut = async () => {
+    if (isSampleMode()) return showToast(PREVIEW_ONLY);
     try {
       await post('/api/logout');
     } catch {
@@ -143,6 +147,7 @@ export function App() {
   return (
     <MeContext.Provider value={me}>
       <div class="app">
+        {isSampleMode() && <SampleChrome />}
         <div class="view">
           {tab === 'carts' && <Carts data={carts} error={cartsError} loading={cartsLoading} refresh={loadCarts} />}
           {tab === 'talk' && <Talk onSignedOut={() => void loadMe()} onOrdered={() => void loadCarts()} />}

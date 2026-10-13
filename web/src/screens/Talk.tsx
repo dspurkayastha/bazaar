@@ -4,7 +4,8 @@ import { CartCard, fromQuote } from '../components/CartCard';
 import { buzz, humanize, reasonText } from '../format';
 import { useMe } from '../me';
 import { initialVoiceState, voiceReducer, type Orb } from '../voice/reducer';
-import { MicError, VoiceSession } from '../voice/session';
+import { createVoiceSession, type VoiceLike } from '../sample/voice';
+import { MicError } from '../voice/session';
 
 const ORB_LABEL: Record<Orb, string> = {
   off: 'Tap to talk',
@@ -17,14 +18,14 @@ const ORB_LABEL: Record<Orb, string> = {
 export function Talk({ onSignedOut, onOrdered }: { onSignedOut: () => void; onOrdered: () => void }) {
   const me = useMe();
   const [s, dispatch] = useReducer(voiceReducer, initialVoiceState);
-  const session = useRef<VoiceSession | null>(null);
+  const session = useRef<VoiceLike | null>(null);
   const [micError, setMicError] = useState<string | null>(null);
 
   const active = s.orb !== 'off';
 
   const start = async () => {
     setMicError(null);
-    const sess = new VoiceSession(dispatch);
+    const sess = createVoiceSession(dispatch);
     session.current = sess;
     buzz(12);
     try {
