@@ -12,6 +12,7 @@ import { sessionTokenFrom } from '../auth/session.js';
 import { BazaarError, SupplierError } from '../core/errors.js';
 import { registerVoiceRoute } from '../voice/route.js';
 import { authHook } from './auth.js';
+import { clientIpOf, registerEdgeGate } from './edge.js';
 import { ApiError, webOf, type ApiDeps } from './http.js';
 import { registerApproveRoutes } from './routes/approve.js';
 import { registerLedgerRoutes } from './routes/ledger.js';
@@ -34,7 +35,7 @@ function rateKey(req: FastifyRequest): string {
   if (auth) return `tok:${createHash('sha256').update(auth).digest('hex').slice(0, 32)}`;
   const session = sessionTokenFrom(req.headers.cookie);
   if (session) return `ses:${createHash('sha256').update(session).digest('hex').slice(0, 32)}`;
-  return `ip:${req.ip}`;
+  return `ip:${clientIpOf(req)}`;
 }
 
 export function buildServer(
@@ -47,6 +48,8 @@ export function buildServer(
     logLevel?: string;
     /** Requests per minute per token (default 60). */
     rateLimitMax?: number;
+    /** EDGE_SECRET: when set, every request but /health must carry a matching X-Bazaar-Edge (src/api/edge.ts). */
+    edgeSecret?: string;
   } = {},
 ): FastifyInstance {
   if (!deps.apiToken) throw new Error('BAZAAR_API_TOKEN is not set; refusing to start an unauthenticated API');
@@ -55,6 +58,7 @@ export function buildServer(
   const app = Fastify({ logger, bodyLimit: 64 * 1024 });
   app.decorateRequest('member', undefined);
   app.decorateRequest('webSession', undefined);
+  registerEdgeGate(app, opts.edgeSecret || undefined);
   app.register(rateLimit, {
     global: true,
     max: opts.rateLimitMax ?? RATE_LIMIT_PER_MINUTE,

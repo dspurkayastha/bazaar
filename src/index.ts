@@ -10,7 +10,8 @@
  *   SARVAM_API_KEY     enables /voice (docs/VOICE_PROTOCOL.md); SARVAM_* tune it
  *   WEB_ORIGIN / WEBAUTHN_RP_ID   the web app's origin and passkey RP id (docs/WEB_API.md); default http://localhost
  *   PIN_REQUIRED_ABOVE_RUPEES     approvals above this need the owner's PIN on every channel (default 500)
- *   WEB_DIST           the built web app served at / (default web/dist; build with pnpm web:build)
+ *   EDGE_SECRET        when set, every request but /health must carry a matching X-Bazaar-Edge header (the Cloudflare Worker adds it)
+ *   WEB_DIST          the built web app served at / (default web/dist; build with pnpm web:build)
  */
 import 'dotenv/config';
 import { MemoryStore } from './agent/memory-store.js';
@@ -76,6 +77,9 @@ async function main(): Promise<void> {
   const webhookSecret = process.env.WHATSAPP_WEBHOOK_SECRET ?? '';
   if (!webhookSecret) console.warn('WHATSAPP_WEBHOOK_SECRET not set: /webhooks/whatsapp will refuse every request.');
 
+  if (!process.env.EDGE_SECRET)
+    console.warn('EDGE_SECRET not set: no edge gate (fine for local dev; set it behind Cloudflare).');
+
   const voice = voiceConfigFromEnv();
   if (!voice.sarvam) console.warn('SARVAM_API_KEY not set: /voice will answer voice_unconfigured and close.');
 
@@ -91,7 +95,7 @@ async function main(): Promise<void> {
       pinRequiredAbovePaise,
       voice: { config: voice },
     },
-    { logger: true },
+    { logger: true, ...(process.env.EDGE_SECRET ? { edgeSecret: process.env.EDGE_SECRET } : {}) },
   );
   const port = Number(process.env.PORT ?? 8787);
   await app.listen({ port, host: process.env.HOST ?? '127.0.0.1' });
