@@ -56,7 +56,7 @@ if ! grep -q '^EDGE_SECRET=.' .env; then
   echo
   echo "       $NEW_EDGE_SECRET"
   echo
-  echo "   Paste it into Cloudflare: Workers & Pages -> bazaar-web -> Settings -> Variables and Secrets -> Add -> Secret, name EDGE_SECRET."
+  echo "   Paste it into Cloudflare: Workers & Pages -> bazaar -> Settings -> Variables and Secrets -> Add -> Secret, name EDGE_SECRET."
   echo "   (Lost it? Read it from /opt/bazaar/.env.) Until both sides match, the site answers 403."
 fi
 PG_PORT=$(grep '^BAZAAR_PG_PORT=' .env | cut -d= -f2)
@@ -100,4 +100,4 @@ for i in $(seq 1 15); do curl -fsS http://127.0.0.1:8787/health && echo && break
 echo
 echo "Next: pnpm auth:instamart   (needs: ssh -L 8765:127.0.0.1:8765 <user>@<vps> from a laptop, then open the printed URL)"
 echo "Web sign-in: pnpm member:setup-link dev   (prints a one-time link; open it on the iPhone, register Face ID, set the PIN)"
-echo "Public access: Cloudflare Tunnel (cloudflared) -> http://127.0.0.1:8787 and the bazaar-web Worker. No Caddy block is needed. Steps: deploy/cloudflare.md"
+echo "Public access: Cloudflare Tunnel (cloudflared) -> http://127.0.0.1:8787 and the bazaar Worker. No Caddy block is needed. Steps: deploy/cloudflare.md"

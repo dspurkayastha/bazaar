@@ -11,7 +11,7 @@ import { initialVoiceState, voiceReducer, type VoiceAction } from '../src/voice/
 import { VoiceSession } from '../src/voice/session';
 import type { CartsResponse, HouseholdResponse, LedgerSummary, Me } from '../src/types';
 
-const PREVIEW_HOST = 'feature-x-bazaar-web.dspurkayastha.workers.dev';
+const PREVIEW_HOST = 'feature-x-bazaar.dspurkayastha.workers.dev';
 
 function at(hostname: string) {
   vi.stubGlobal('scrollTo', vi.fn());
@@ -37,7 +37,7 @@ describe('isSampleMode', () => {
     ['127.0.0.1', false],
     ['[::1]', false],
     [PREVIEW_HOST, true],
-    ['bazaar-web.dspurkayastha.workers.dev', true],
+    ['bazaar.dspurkayastha.workers.dev', true],
     ['bazaar.sciscribesolutions.com.evil.test', true],
     ['bazaar-origin.sciscribesolutions.com', true],
     ['', true],

@@ -2,7 +2,7 @@
 #
 # One origin: this Worker serves the SPA from ./dist and forwards /api/* and /voice to the VPS through the Cloudflare
 # Tunnel (worker/index.ts). Everything else is served straight from the assets, without running the Worker.
-name = "bazaar-web"
+name = "bazaar"
 main = "worker/index.ts"
 compatibility_date = "2025-09-01"
 

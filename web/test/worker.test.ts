@@ -21,7 +21,7 @@ function recorder(reply: () => Response | Promise<Response> = () => new Response
 }
 
 describe('preview hosts have no API', () => {
-  for (const host of ['feature-x-bazaar-web.dspurkayastha.workers.dev', 'bazaar-web.dspurkayastha.workers.dev']) {
+  for (const host of ['feature-x-bazaar.dspurkayastha.workers.dev', 'bazaar.dspurkayastha.workers.dev']) {
     for (const path of ['/api/me', '/api/carts/abc/approve', '/voice']) {
       it(`${host}${path} -> 404 JSON, no fetch`, async () => {
         const { seen, fetchImpl } = recorder();

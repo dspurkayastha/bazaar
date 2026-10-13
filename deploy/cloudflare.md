@@ -3,7 +3,7 @@
 What you end up with, all on one origin, `https://bazaar.sciscribesolutions.com`:
 
 ```
-browser ──► Cloudflare Worker "bazaar-web"  ──/api/* and /voice──►  bazaar-origin.sciscribesolutions.com
+browser ──► Cloudflare Worker "bazaar"  ──/api/* and /voice──►  bazaar-origin.sciscribesolutions.com
             (serves the app from static           (adds X-Bazaar-Edge)        │  Cloudflare Tunnel (cloudflared on the VPS)
              assets, same origin)                                              ▼
                                                                        http://127.0.0.1:8787  (Bazaar, pm2)
@@ -48,7 +48,7 @@ That deletes from the line that starts the block to the first `}` at the start o
 ## 3. The Worker (static assets + forwarder)
 
 1. Dashboard → Workers & Pages → **Create** → **Import a repository** (connect GitHub if asked) → `dspurkayastha/bazaar`.
-2. Project name: **`bazaar-web`**. It must equal `name` in `web/wrangler.toml`. Production branch `main`.
+2. Project name: **`bazaar`**. It must equal `name` in `web/wrangler.toml`. Production branch `main`.
 3. Build settings:
    - Root directory: `web`
    - Build command: `pnpm install --frozen-lockfile && pnpm build`
@@ -61,7 +61,7 @@ That deletes from the line that starts the block to the first `}` at the start o
 4. Settings → **Variables and Secrets** → Add → type **Secret**, name `EDGE_SECRET`, value from step 4 below. (Generate it first if you like: step 4 gives the command. You can add the secret any time after the first deploy.) `PRODUCTION_HOST`, `ORIGIN_URL` and `WS_MODE` are plain variables already set by `wrangler.toml`; do not retype them in the dashboard.
 5. Settings → **Domains & Routes** → Add → **Custom domain** → `bazaar.sciscribesolutions.com`. Cloudflare creates the DNS record and certificate. Leave Version URLs enabled (that is what gives branch previews their URLs).
 
-Branch previews: every non-production branch push runs `wrangler versions upload`, and the Builds page shows a version URL like `<prefix>-bazaar-web.<your-subdomain>.workers.dev`. Open it: banner "Preview — sample data", every screen filled, buttons say "Preview only".
+Branch previews: every non-production branch push runs `wrangler versions upload`, and the Builds page shows a version URL like `<prefix>-bazaar.<your-subdomain>.workers.dev`. Open it: banner "Preview — sample data", every screen filled, buttons say "Preview only".
 
 ## 4. The VPS side
 
