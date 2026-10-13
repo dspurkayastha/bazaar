@@ -176,10 +176,13 @@ export function sampleHousehold(): HouseholdResponse {
 }
 
 export function sampleSupplierAddresses(): unknown {
-  return [
-    { id: 'ia_1', label: 'Work', address: 'Tarapur, Silchar', city: 'Silchar' },
-    { id: 'ia_2', label: 'Friend', address: 'Zoo Road, Guwahati', city: 'Guwahati' },
-  ];
+  return {
+    addresses: [
+      { id: 'ia_1', tag: 'Work', category: 'Work', addressLine: 'Tarapur, Silchar' },
+      { id: 'ia_2', tag: 'Friend', category: 'Others', addressLine: 'Zoo Road, Guwahati' },
+    ],
+    available: true,
+  };
 }
 
 /** One plausible month; the month asked for is echoed back so the picker works. Sums are consistent. */
