@@ -18,10 +18,24 @@ Run the Bazaar server on port 8787 with `WEB_ORIGIN=http://localhost:5173` and `
 
 ## Serving it
 
-The server serves `web/dist` at the site root. It needs an SPA fallback for `GET /setup/*` (return `index.html`); every other screen is a `#hash` tab, so no other fallback is required. Never cache `/api` or `/voice`. `sw.js` must be served from `/` with `Cache-Control: no-cache`.
+Production is a Cloudflare Worker with static assets (`wrangler.toml`, `worker/index.ts`): it serves `dist/` with an SPA fallback and forwards `/api/*` and `/voice` to the VPS through a Cloudflare Tunnel, so the browser sees one origin (cookies, CSP, passkey RP ID and the `/voice` Origin check stay as they were). Set-up: `deploy/cloudflare.md`. `public/_headers` carries the CSP and cache headers for the static files; keep it equal to `src/api/static.ts` (`test/web-headers.test.ts` checks).
+
+```sh
+pnpm --dir web test                       # includes the Worker unit tests (test/worker.test.ts)
+pnpm --dir web exec wrangler deploy --dry-run   # validates wrangler.toml and bundles the Worker, no login
+```
+
+The Bazaar server can still serve `web/dist` itself (`pnpm web:build`; SPA fallback for `GET /setup/*`), which is what local dev against the built app uses. Never cache `/api` or `/voice`. `sw.js` must be served from `/` with `Cache-Control: no-cache`.
+
+`wrangler` is pinned exactly in `package.json`. Secret `EDGE_SECRET` is set with `npx wrangler secret put EDGE_SECRET` or in the dashboard (Settings, Variables and Secrets); never put it in `wrangler.toml`.
+
+## Preview (sample) mode
+
+On any host that is not `bazaar.sciscribesolutions.com`, `localhost` or `127.0.0.1` (Cloudflare branch previews, `*.workers.dev`) the app runs on sample data: no fetch at all, a "Preview — sample data" banner, a "Preview only" toast on every action, and Talk plays a scripted exchange without a microphone. It is all in `src/sample/`, switched in at `src/api.ts` (and `createVoiceSession` for Talk), so screens do not branch. `fixtures.ts` is the data (two held carts, one from the partner over ₹500; recent orders; a ledger month; four members including the Guwahati family; five places). To look at it locally, open the dev server by a non-local hostname (`pnpm --dir web dev --host`, then `http://<your-lan-ip>:5173`) or temporarily change `isSampleMode` in `src/sample/mode.ts`.
 
 ## Layout
 
+- `worker/index.ts` the Cloudflare Worker (forwarder); `src/sample/` preview mode.
 - `src/api.ts` fetch wrapper: `X-Bazaar: 1` on every non-GET, 401 returns to sign-in, friendly 403/423/5xx messages.
 - `src/voice/reducer.ts` pure reducer for every server message (`state x message -> state`).
 - `src/voice/resample.ts` pure resampler (any rate to 16 kHz), Int16 conversion and 40 ms framer.

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One-shot VPS setup for Bazaar on the SciScribe Hetzner box (Ubuntu 24.04, Docker + PM2 + Caddy already present).
+# One-shot VPS setup for Bazaar on the SciScribe Hetzner box (Ubuntu 24.04, Docker + PM2 already present).
+# Bazaar listens on 127.0.0.1:8787 only; the public door is a Cloudflare Tunnel + Worker (deploy/cloudflare.md).
 # Usage: bash deploy/setup-vps.sh            (run from the repo root, as the deploy user)
 # Idempotent: safe to re-run after git pull.
 set -euo pipefail
@@ -23,9 +24,9 @@ command -v pm2 >/dev/null || npm i -g pm2
 node -v
 
 echo "== .env"
+gen() { node -e "console.log(require('crypto').randomBytes($1).toString('base64url'))"; }
 if [ ! -f .env ]; then
   cp .env.example .env
-  gen() { node -e "console.log(require('crypto').randomBytes($1).toString('base64url'))"; }
   sed -i "s|^BAZAAR_API_TOKEN=.*|BAZAAR_API_TOKEN=$(gen 32)|" .env
   sed -i "s|^TOKEN_ENC_KEY=.*|TOKEN_ENC_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")|" .env
   sed -i "s|^WHATSAPP_WEBHOOK_SECRET=.*|WHATSAPP_WEBHOOK_SECRET=$(gen 32)|" .env
@@ -46,6 +47,18 @@ fi
 grep -q '^WEB_ORIGIN=' .env || echo 'WEB_ORIGIN=https://bazaar.sciscribesolutions.com' >> .env
 grep -q '^WEBAUTHN_RP_ID=' .env || echo 'WEBAUTHN_RP_ID=bazaar.sciscribesolutions.com' >> .env
 grep -q '^PIN_REQUIRED_ABOVE_RUPEES=' .env || echo 'PIN_REQUIRED_ABOVE_RUPEES=500' >> .env
+# Shared secret with the Cloudflare Worker: every request but /health must carry it (X-Bazaar-Edge). Never rotated here.
+if ! grep -q '^EDGE_SECRET=.' .env; then
+  NEW_EDGE_SECRET=$(gen 32)
+  sed -i '/^EDGE_SECRET=/d' .env
+  echo "EDGE_SECRET=$NEW_EDGE_SECRET" >> .env
+  echo "   generated EDGE_SECRET. It is shown ONCE, here:"
+  echo
+  echo "       $NEW_EDGE_SECRET"
+  echo
+  echo "   Paste it into Cloudflare: Workers & Pages -> bazaar-web -> Settings -> Variables and Secrets -> Add -> Secret, name EDGE_SECRET."
+  echo "   (Lost it? Read it from /opt/bazaar/.env.) Until both sides match, the site answers 403."
+fi
 PG_PORT=$(grep '^BAZAAR_PG_PORT=' .env | cut -d= -f2)
 sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgres://bazaar:bazaar@127.0.0.1:$PG_PORT/bazaar|" .env
 grep -q '^ANTHROPIC_API_KEY=sk-' .env || echo "   !! ANTHROPIC_API_KEY not set in .env"
@@ -87,4 +100,4 @@ for i in $(seq 1 15); do curl -fsS http://127.0.0.1:8787/health && echo && break
 echo
 echo "Next: pnpm auth:instamart   (needs: ssh -L 8765:127.0.0.1:8765 <user>@<vps> from a laptop, then open the printed URL)"
 echo "Web sign-in: pnpm member:setup-link dev   (prints a one-time link; open it on the iPhone, register Face ID, set the PIN)"
-echo "Optional Caddy: add to /etc/caddy/Caddyfile ->  bazaar.sciscribesolutions.com { reverse_proxy 127.0.0.1:8787 }  then: sudo systemctl reload caddy"
+echo "Public access: Cloudflare Tunnel (cloudflared) -> http://127.0.0.1:8787 and the bazaar-web Worker. No Caddy block is needed. Steps: deploy/cloudflare.md"

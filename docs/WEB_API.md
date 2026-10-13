@@ -1,6 +1,6 @@
 # Bazaar web app ⇄ server contract
 
-Decided 12 Oct 2026 (see PRD "Voice-first front end"). The web app is served by Bazaar itself at `https://bazaar.sciscribesolutions.com/` and is the screen; voice reaches Bazaar by phone (provider deferred) or by the web app's Talk button over `/voice` (docs/VOICE_PROTOCOL.md). Money is integer paise in every payload. All routes below are same-origin JSON.
+Decided 12 Oct 2026 (see PRD "Voice-first front end"). The web app is served at `https://bazaar.sciscribesolutions.com/` (a Cloudflare Worker serves the static app and forwards `/api/*` and `/voice` to Bazaar; see Hosting below; Bazaar can still serve `web/dist` itself, which is how local dev and tests work) and is the screen; voice reaches Bazaar by phone (provider deferred) or by the web app's Talk button over `/voice` (docs/VOICE_PROTOCOL.md). Money is integer paise in every payload. All routes below are same-origin JSON.
 
 ## Identity
 
@@ -44,6 +44,18 @@ Decided 12 Oct 2026 (see PRD "Voice-first front end"). The web app is served by 
 `OrderSummary = {supplierOrderId, placedAt, place, total, status, member}`
 
 Errors: `{error:{code, message}}` with HTTP 400/401/403/404/409/423 (423 = PIN locked).
+
+## Hosting (Cloudflare, decided 13 Oct)
+
+One origin, so cookies (`SameSite=Strict`), the CSP, the WebAuthn RP ID and the `/voice` `Origin` check are exactly as described here:
+
+- **Worker `bazaar-web`** (`web/wrangler.toml`, `web/worker/index.ts`) with static assets from `web/dist`, SPA fallback, `run_worker_first = ["/api/*", "/voice"]`. Every other path is served straight from the assets, with the security and cache headers in `web/public/_headers` (same CSP as `src/api/static.ts`; `test/web-headers.test.ts` keeps them equal).
+- **Forwarding**: on the production host only (`PRODUCTION_HOST`), the Worker sends `/api/*` and `/voice` to `ORIGIN_URL` (`https://bazaar-origin.sciscribesolutions.com`, a Cloudflare Tunnel to `127.0.0.1:8787`) with the method, path, query, body and all client headers (`Cookie`, `Origin`, `Content-Type`, `X-Bazaar`, `Authorization`, `Upgrade`, `Sec-WebSocket-*`), plus `X-Bazaar-Edge: <EDGE_SECRET>`, `X-Forwarded-Host`, `X-Forwarded-Proto: https` and `X-Real-IP` (from `CF-Connecting-IP`). A client-supplied `X-Bazaar-Edge`, `X-Real-IP` or `X-Forwarded-*` is dropped first. Responses, `Set-Cookie` included, come back untouched. The Worker never logs cookies or the secret.
+- **Edge gate on the server** (`src/api/edge.ts`): when `EDGE_SECRET` is set, every request except `/health` needs a matching `X-Bazaar-Edge` (timing-safe compare) or gets `403 {error:{code:'forbidden'}}`, the `/voice` upgrade included. Only a request that passed the gate may set the client address via `X-Real-IP`; the rate limiter keys on it. Unset (local dev) = no gate, and `X-Real-IP` is ignored.
+- **Branch previews are visual only**: on any host other than production, `localhost` and `127.0.0.1`, the Worker answers `/api/*` and `/voice` with `404 {error:{code:'preview', message:'Previews have no API'}}`, and the app runs in sample mode (`web/src/sample/`): fixtures at the api layer, a "Preview — sample data" banner, writes show a "Preview only" toast, Talk plays a scripted exchange. It makes no requests at all.
+- **WebSocket**: the Worker returns the origin's `101` response as is (`WS_MODE = "passthrough"`); `WS_MODE = "splice"` pairs the sockets by hand and relays messages and close codes (4401, 4409, 1011 reach the browser unchanged). Close codes the wire cannot carry (1005, 1006) are sent as 1000.
+
+Set-up steps: `deploy/cloudflare.md`.
 
 ## Voice from the web app
 

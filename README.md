@@ -28,7 +28,9 @@ Money is integer paise throughout; IDs are ULIDs; times are ISO strings.
 
 Bazaar serves the web app itself at `https://bazaar.sciscribesolutions.com/` (contract: `docs/WEB_API.md`; the frontend lives in `web/` and is built with `pnpm web:build` into `web/dist`). Sign-in is a passkey (Face ID in Safari); approvals above `PIN_REQUIRED_ABOVE_RUPEES` (default ₹500) also need the owner's 4–6 digit PIN, on every channel. Set `WEB_ORIGIN` and `WEBAUTHN_RP_ID` in `.env` (local dev: leave them unset for `http://localhost:8787`).
 
-First run on the VPS (after `bash deploy/setup-vps.sh`, with Caddy proxying the domain to `127.0.0.1:8787`):
+Hosting: a Cloudflare Worker serves the app and forwards `/api` and `/voice` through a Cloudflare Tunnel to `127.0.0.1:8787` (no open port, no Caddy; `EDGE_SECRET` makes the server refuse anything that did not come through the Worker). Branch previews show sample data only. Steps: `deploy/cloudflare.md`.
+
+First run on the VPS (after `bash deploy/setup-vps.sh` and `deploy/cloudflare.md`):
 
 ```sh
 pnpm web:build && pm2 restart bazaar     # once the web app is in the checkout
