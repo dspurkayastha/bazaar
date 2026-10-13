@@ -1,0 +1,29 @@
+# Cloudflare Workers (static assets) config for the Bazaar web app. Deploy steps: deploy/cloudflare.md.
+#
+# One origin: this Worker serves the SPA from ./dist and forwards /api/* and /voice to the VPS through the Cloudflare
+# Tunnel (worker/index.ts). Everything else is served straight from the assets, without running the Worker.
+name = "bazaar-web"
+main = "worker/index.ts"
+compatibility_date = "2025-09-01"
+
+# Branch builds (Workers Builds -> `wrangler versions upload`) get a preview URL. Previews are visual only:
+# the Worker answers 404 JSON on /api and /voice for any host but PRODUCTION_HOST, and the app runs on sample data.
+preview_urls = true
+workers_dev = true
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/voice"]
+
+[vars]
+PRODUCTION_HOST = "bazaar.sciscribesolutions.com"
+ORIGIN_URL = "https://bazaar-origin.sciscribesolutions.com"
+# "passthrough" returns the origin's 101 response to the browser as is (try first). If the live /voice check
+# fails at the upgrade, set WS_MODE = "splice" to pair the sockets by hand. See deploy/cloudflare.md.
+WS_MODE = "passthrough"
+
+# Secret (never put it here): the shared secret the VPS checks in X-Bazaar-Edge.
+#   npx wrangler secret put EDGE_SECRET        (or dashboard: Settings -> Variables and Secrets)
+# The same value goes in /opt/bazaar/.env on the VPS as EDGE_SECRET.

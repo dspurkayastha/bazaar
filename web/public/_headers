@@ -1,0 +1,27 @@
+# Cloudflare Workers static assets: headers for files served straight from ./dist (the Worker does not run for these).
+# Same policy as src/api/static.ts; test/web-headers.test.ts keeps the two in step.
+# /api/* and /voice are answered by the Bazaar server itself, which sets its own headers.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self' wss://bazaar.sciscribesolutions.com; manifest-src 'self'; worker-src 'self'; media-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/
+  Cache-Control: no-cache
+
+/index.html
+  Cache-Control: no-cache
+
+/sw.js
+  Cache-Control: no-cache
+
+/manifest.webmanifest
+  Cache-Control: no-cache
+
+/pcm-capture.js
+  Cache-Control: no-cache
